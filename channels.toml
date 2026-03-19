@@ -1,0 +1,17 @@
+# Telegram chats to monitor for digest generation.
+# Each channel requires a numeric chat_id and a human-readable title.
+#
+# To find a chat_id, forward a message from the chat to @userinfobot
+# or use scripts/generate_session.py to list your dialogs.
+
+[settings]
+digest_hours = 25          # hours of history to fetch (25h covers cron drift)
+min_message_length = 30    # skip messages shorter than this
+
+[[channels]]
+chat_id = -1001234567890
+title = "Маркировка — Общие вопросы"
+
+[[channels]]
+chat_id = -1001234567891
+title = "Честный ЗНАК — Pair программирование"
