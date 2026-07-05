@@ -1,17 +1,26 @@
-# Telegram chats to monitor for digest generation.
-# Each channel requires a numeric chat_id and a human-readable title.
+# Allow-list of Monitored Chats for the daily Digest.
 #
-# To find a chat_id, forward a message from the chat to @userinfobot
-# or use scripts/generate_session.py to list your dialogs.
+# Only chat_id is needed — the human-readable title is read from the Message
+# Store (chats.title in the scraper's PostgreSQL). The title comments below are
+# just for humans reading this file.
+#
+# The Message Store is shared with a general-purpose scraper, so this explicit
+# allow-list is what keeps unrelated chats out of the markirovka Digest.
 
 [settings]
-digest_hours = 25          # hours of history to fetch (25h covers cron drift)
-min_message_length = 30    # skip messages shorter than this
+min_message_length = 30    # skip messages shorter than this (noise: "+1", "ок")
 
 [[channels]]
-chat_id = -1001234567890
-title = "Маркировка — Общие вопросы"
+chat_id = -1001205001393   # Маркировка. Главный чат
 
 [[channels]]
-chat_id = -1001234567891
-title = "Честный ЗНАК — Pair программирование"
+chat_id = -1001359438834   # Маркировка. Молоко
+
+[[channels]]
+chat_id = -1001329208283   # Маркировка. Легпром и обувь
+
+[[channels]]
+chat_id = -1002202471035   # Маркировка. Электроника
+
+[[channels]]
+chat_id = -1001388762634   # Маркировка. Техно-чат

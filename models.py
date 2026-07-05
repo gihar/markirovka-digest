@@ -6,31 +6,35 @@ from datetime import datetime
 
 @dataclass(frozen=True)
 class TelegramMessage:
-    """A single message downloaded from a Telegram chat."""
+    """A message read from the Message Store for inclusion in a Digest.
 
-    message_id: int
+    Only the fields the Digest actually uses. The Digest Service is a read-only
+    consumer (see ADR-0001); it never persists these back.
+    """
+
     chat_id: int
     chat_title: str
-    sender_name: str | None
+    sender_name: str
     text: str
     date: datetime
-    reply_to_message_id: int | None
-    content_hash: str  # SHA-256 of text
 
 
 @dataclass(frozen=True)
 class ChannelConfig:
-    """A Telegram channel to monitor, loaded from channels.toml."""
+    """A Monitored Chat in the digest allow-list.
+
+    Only the chat id is configured; the human-readable title lives in the
+    Message Store (chats.title).
+    """
 
     chat_id: int
-    title: str
 
 
 @dataclass(frozen=True)
 class DigestResult:
     """The output of the digest generation pipeline."""
 
-    date: str  # YYYY-MM-DD
+    date: str  # YYYY-MM-DD — the covered Europe/Moscow calendar day
     markdown: str
     message_count: int
     chat_count: int
