@@ -119,12 +119,13 @@ def split_message(
 
 
 def _dated_header(date_str: str) -> str:
-    """A bold, human-friendly digest header from an ISO date (→ DD.MM.YYYY).
+    """A bold, human-friendly digest title from an ISO date (→ DD.MM.YYYY).
 
-    Injected by us rather than trusting the model to state the covered day.
+    Injected by us — the single title of the message — rather than trusting the
+    model to state the covered day (the prompt forbids the model its own title).
     """
     day = date.fromisoformat(date_str)
-    return f"🗓 **Дайджест за {day.strftime('%d.%m.%Y')}**"
+    return f"🗓 **Дайджест по маркировке за {day.strftime('%d.%m.%Y')}**"
 
 
 def render_parts(digest: DigestResult, limit: int = _TELEGRAM_LIMIT) -> list[str]:
