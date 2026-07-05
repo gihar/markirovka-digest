@@ -7,7 +7,6 @@ dist/
 
 # Secrets
 .env
-*.session
 *.key
 
 # OS
@@ -19,6 +18,5 @@ Thumbs.db
 .vscode/
 *.swp
 
-# Data (messages.db is tracked in data/)
+# Stray local databases
 *.db
-!data/messages.db
