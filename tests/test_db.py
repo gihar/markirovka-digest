@@ -13,10 +13,10 @@ def _chat(conn, chat_id: int, title: str):
     )
 
 
-def _user(conn, user_id: int, first_name=None, username=None):
+def _user(conn, user_id: int, first_name=None, username=None, is_bot=False):
     conn.execute(
-        "INSERT INTO users (id, first_name, username) VALUES (%s, %s, %s)",
-        (user_id, first_name, username),
+        "INSERT INTO users (id, first_name, username, is_bot) VALUES (%s, %s, %s, %s)",
+        (user_id, first_name, username, is_bot),
     )
 
 
@@ -27,6 +27,19 @@ def _msg(conn, chat_id, message_id, user_id, sent_at, text=None, caption=None):
            VALUES (%s, %s, %s, %s, %s, %s)""",
         (message_id, chat_id, user_id, text, caption, sent_at),
     )
+
+
+def test_excludes_messages_from_bot_accounts(pg_conn):
+    _chat(pg_conn, -1001, "Маркировка")
+    _user(pg_conn, 9, username="spambot", is_bot=True)
+    _user(pg_conn, 5, username="ivan")  # human (default is_bot=False)
+    at = datetime(2026, 7, 4, 10, 0, tzinfo=UTC)
+    _msg(pg_conn, -1001, 1, 9, at, text="реклама от бота, купи всё прямо сейчас")
+    _msg(pg_conn, -1001, 2, 5, at, text="содержательное сообщение по маркировке")
+
+    messages = fetch_digest_messages(pg_conn, [-1001], DAY, min_length=1)
+
+    assert [m.text for m in messages] == ["содержательное сообщение по маркировке"]
 
 
 def test_returns_a_message_sent_on_the_target_msk_day(pg_conn):

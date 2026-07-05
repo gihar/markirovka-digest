@@ -30,6 +30,7 @@ WHERE m.chat_id = ANY(%(chat_ids)s)
   AND (m.sent_at AT TIME ZONE 'Europe/Moscow')::date = %(day)s
   AND COALESCE(m.text, m.caption) IS NOT NULL
   AND char_length(COALESCE(m.text, m.caption)) >= %(min_length)s
+  AND u.is_bot IS NOT TRUE
 ORDER BY c.title, m.sent_at
 """
 

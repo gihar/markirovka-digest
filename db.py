@@ -20,6 +20,8 @@ from models import TelegramMessage
 # The Digest Window is bucketed by the Europe/Moscow calendar date: converting a
 # timestamptz with a single AT TIME ZONE yields the naive Moscow wall-clock, and
 # ::date on that is the Moscow calendar day (independent of session timezone).
+# Bot-authored messages are excluded (u.is_bot IS NOT TRUE also keeps rows with
+# no user, where the LEFT JOIN yields NULL).
 _QUERY = """
 SELECT
     c.title                                        AS chat_title,
@@ -34,6 +36,7 @@ WHERE m.chat_id = ANY(%(chat_ids)s)
   AND (m.sent_at AT TIME ZONE 'Europe/Moscow')::date = %(day)s
   AND COALESCE(m.text, m.caption) IS NOT NULL
   AND char_length(COALESCE(m.text, m.caption)) >= %(min_length)s
+  AND u.is_bot IS NOT TRUE
 ORDER BY c.title, m.sent_at
 """
 
