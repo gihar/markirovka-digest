@@ -10,6 +10,7 @@ import html
 import logging
 import re
 import time
+from datetime import date
 from typing import Callable
 
 import httpx
@@ -117,20 +118,32 @@ def split_message(
     return parts
 
 
+def _dated_header(date_str: str) -> str:
+    """A bold, human-friendly digest header from an ISO date (→ DD.MM.YYYY).
+
+    Injected by us rather than trusting the model to state the covered day.
+    """
+    day = date.fromisoformat(date_str)
+    return f"🗓 **Дайджест за {day.strftime('%d.%m.%Y')}**"
+
+
 def render_parts(digest: DigestResult, limit: int = _TELEGRAM_LIMIT) -> list[str]:
     """Render a Digest to ready-to-send Telegram HTML message parts.
 
-    Splits the raw markdown — sizing each chunk by its rendered HTML length —
-    then converts each chunk to HTML independently. This guarantees a split
-    never severs an HTML tag or entity, so every part is valid under
-    parse_mode=HTML. (In the rare case an oversized single line is hard-split
-    mid-``**bold**``, the orphaned markers render as literal asterisks rather
-    than producing malformed HTML — content is preserved either way.)
+    Prepends a dated header (which day this digest covers) to the body, then
+    splits the raw markdown — sizing each chunk by its rendered HTML length —
+    and converts each chunk to HTML independently. The header lands on the first
+    part only. Splitting on the raw source guarantees a split never severs an
+    HTML tag or entity, so every part is valid under parse_mode=HTML. (In the
+    rare case an oversized single line is hard-split mid-``**bold**``, the
+    orphaned markers render as literal asterisks — content is preserved either
+    way.)
     """
     def html_len(chunk: str) -> int:
         return len(markdown_to_telegram_html(chunk))
 
-    raw_parts = split_message(digest.markdown, limit, measure=html_len)
+    body = f"{_dated_header(digest.date)}\n\n{digest.markdown}"
+    raw_parts = split_message(body, limit, measure=html_len)
     return [markdown_to_telegram_html(part) for part in raw_parts]
 
 

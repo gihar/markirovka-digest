@@ -71,9 +71,23 @@ def test_markdown_to_html_escapes_then_formats():
     assert "<i>курсив</i>" in out
 
 
+def test_render_parts_prepends_dated_header():
+    parts = render_parts(_digest("**Итоги** дня"))
+    assert parts[0].startswith("🗓 <b>Дайджест за 04.07.2026</b>")
+    assert "<b>Итоги</b> дня" in parts[0]
+
+
 def test_render_parts_short_digest_is_one_html_part():
     parts = render_parts(_digest("**Итоги** дня"), limit=4096)
-    assert parts == ["<b>Итоги</b> дня"]
+    assert parts == ["🗓 <b>Дайджест за 04.07.2026</b>\n\n<b>Итоги</b> дня"]
+
+
+def test_dated_header_only_on_first_part_when_split():
+    long_md = "\n".join(f"строка {i}" for i in range(300))
+    parts = render_parts(_digest(long_md), limit=200)
+    assert len(parts) > 1
+    assert parts[0].startswith("🗓 <b>Дайджест за 04.07.2026</b>")
+    assert all("Дайджест за" not in p for p in parts[1:])
 
 
 def test_render_parts_long_digest_is_split_under_limit():
