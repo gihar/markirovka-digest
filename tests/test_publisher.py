@@ -4,12 +4,16 @@ import pytest
 
 from models import DigestResult
 from publisher import (
+    _TELEGRAM_SEND_INTERVAL,
     TelegramDeliveryError,
+    TelegramFloodError,
     markdown_to_telegram_html,
     render_parts,
     send_parts,
     split_message,
 )
+
+_NO_SLEEP = lambda *_: None  # noqa: E731 — instant tests, no real waiting
 
 
 def _digest(markdown: str) -> DigestResult:
@@ -109,6 +113,7 @@ def test_send_parts_posts_each_part_with_html_payload():
         token="123:abc",
         chat_id="-1009999",
         post=lambda url, payload: calls.append((url, payload)),
+        sleep=_NO_SLEEP,
     )
     assert [c[0] for c in calls] == [
         "https://api.telegram.org/bot123:abc/sendMessage",
@@ -129,7 +134,10 @@ def test_send_parts_attempts_every_part_then_raises_on_failure():
         sent.append(payload["text"])
 
     with pytest.raises(TelegramDeliveryError):
-        send_parts(["ok1", "boom", "ok2"], token="t", chat_id="-1", post=flaky)
+        send_parts(
+            ["ok1", "boom", "ok2"], token="t", chat_id="-1",
+            post=flaky, sleep=_NO_SLEEP,
+        )
 
     # Remaining parts are still attempted before the failure is surfaced.
     assert sent == ["ok1", "ok2"]
@@ -137,6 +145,48 @@ def test_send_parts_attempts_every_part_then_raises_on_failure():
 
 def test_send_parts_returns_count_when_all_succeed():
     count = send_parts(
-        ["a", "b"], token="t", chat_id="-1", post=lambda url, payload: None
+        ["a", "b"], token="t", chat_id="-1",
+        post=lambda url, payload: None, sleep=_NO_SLEEP,
     )
     assert count == 2
+
+
+def test_send_parts_paces_between_parts():
+    slept = []
+    send_parts(
+        ["a", "b", "c"], token="t", chat_id="-1",
+        post=lambda url, payload: None, sleep=slept.append,
+    )
+    # One pacing pause per gap between the 3 parts (none before the first).
+    assert slept == [_TELEGRAM_SEND_INTERVAL, _TELEGRAM_SEND_INTERVAL]
+
+
+def test_send_parts_honors_retry_after_then_succeeds():
+    slept = []
+    attempts = []
+
+    def flooded_once(url, payload):
+        attempts.append(payload["text"])
+        # "b" floods on its first attempt, then goes through.
+        if payload["text"] == "b" and attempts.count("b") == 1:
+            raise TelegramFloodError(retry_after=5.0)
+
+    count = send_parts(
+        ["a", "b"], token="t", chat_id="-1",
+        post=flooded_once, sleep=slept.append, max_flood_retries=2,
+    )
+
+    assert count == 2  # 'b' recovered after honoring retry_after
+    assert 5.0 in slept  # waited the retry_after before retrying
+    assert attempts == ["a", "b", "b"]
+
+
+def test_send_parts_gives_up_after_persistent_flood():
+    def always_flood(url, payload):
+        raise TelegramFloodError(retry_after=1.0)
+
+    with pytest.raises(TelegramDeliveryError):
+        send_parts(
+            ["a"], token="t", chat_id="-1",
+            post=always_flood, sleep=_NO_SLEEP, max_flood_retries=2,
+        )

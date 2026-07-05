@@ -9,6 +9,7 @@ longer uses asyncio.
 import html
 import logging
 import re
+import time
 from typing import Callable
 
 import httpx
@@ -22,9 +23,24 @@ logger = logging.getLogger(__name__)
 _TELEGRAM_LIMIT: int = 4096
 _HTTP_TIMEOUT: int = 30
 
+# Pace multi-part sends: Telegram's per-chat flood limit is ~1 message/second.
+_TELEGRAM_SEND_INTERVAL: float = 1.0
+# Bounded retries when Telegram asks us to wait (HTTP 429 + retry_after).
+_MAX_FLOOD_RETRIES: int = 2
+# Fallback wait if a 429 carries no retry_after we can read.
+_DEFAULT_RETRY_AFTER: float = 3.0
+
 
 class TelegramDeliveryError(RuntimeError):
     """Raised when one or more Telegram message parts failed to send."""
+
+
+class TelegramFloodError(Exception):
+    """Raised on HTTP 429 — Telegram asked us to wait ``retry_after`` seconds."""
+
+    def __init__(self, retry_after: float) -> None:
+        self.retry_after = retry_after
+        super().__init__(f"Telegram flood wait: {retry_after}s")
 
 
 def markdown_to_telegram_html(md: str) -> str:
@@ -118,11 +134,49 @@ def render_parts(digest: DigestResult, limit: int = _TELEGRAM_LIMIT) -> list[str
     return [markdown_to_telegram_html(part) for part in raw_parts]
 
 
+def _parse_retry_after(resp: httpx.Response) -> float:
+    """Extract the flood-wait seconds from a 429 response."""
+    try:
+        retry_after = resp.json().get("parameters", {}).get("retry_after")
+        if retry_after is not None:
+            return float(retry_after)
+    except (ValueError, AttributeError, TypeError):
+        pass
+    header = resp.headers.get("Retry-After")
+    return float(header) if header else _DEFAULT_RETRY_AFTER
+
+
 def _http_post(url: str, payload: dict) -> None:
-    """Send one POST to Telegram, raising on non-2xx."""
+    """Send one POST to Telegram.
+
+    Raises TelegramFloodError on 429 (recoverable — wait and retry) and the
+    underlying httpx error on any other non-2xx.
+    """
     with httpx.Client() as client:
         resp = client.post(url, json=payload, timeout=_HTTP_TIMEOUT)
+        if resp.status_code == 429:
+            raise TelegramFloodError(_parse_retry_after(resp))
         resp.raise_for_status()
+
+
+def _send_one(url, payload, post, sleep, max_flood_retries: int) -> bool:
+    """Send one part, honoring Telegram flood-waits. Returns True on success."""
+    for attempt in range(max_flood_retries + 1):
+        try:
+            post(url, payload)
+            return True
+        except TelegramFloodError as exc:
+            if attempt >= max_flood_retries:
+                logger.error("Flood limit not cleared after retries: %s", exc)
+                return False
+            logger.warning(
+                "Telegram flood: waiting %.1fs before retry", exc.retry_after
+            )
+            sleep(exc.retry_after)
+        except Exception as exc:  # network / API error — permanent for this part
+            logger.error("Failed to send Telegram message part: %s", exc)
+            return False
+    return False
 
 
 def send_parts(
@@ -131,25 +185,29 @@ def send_parts(
     chat_id: str,
     *,
     post=_http_post,
+    sleep: Callable[[float], None] = time.sleep,
+    max_flood_retries: int = _MAX_FLOOD_RETRIES,
+    interval: float = _TELEGRAM_SEND_INTERVAL,
 ) -> int:
     """Send each part as a separate Telegram message. Returns parts sent.
 
-    A failed part is logged but does not stop the remaining parts. If any part
-    failed, raises TelegramDeliveryError after attempting them all — so a cron
-    run that could not deliver the digest exits non-zero instead of looking
-    successful.
+    Paces multi-part sends by ``interval`` to stay under Telegram's per-chat
+    flood limit, and honors a 429's retry_after with bounded retries. A part
+    that still fails is logged and does not stop the rest; if any part failed,
+    raises TelegramDeliveryError after attempting them all — so a cron run that
+    could not deliver the digest exits non-zero instead of looking successful.
     """
     url = f"https://api.telegram.org/bot{token}/sendMessage"
     sent = 0
     failed = 0
-    for part in parts:
+    for i, part in enumerate(parts):
+        if i > 0:
+            sleep(interval)  # pace to stay under the per-chat flood limit
         payload = {"chat_id": chat_id, "text": part, "parse_mode": "HTML"}
-        try:
-            post(url, payload)
+        if _send_one(url, payload, post, sleep, max_flood_retries):
             sent += 1
-        except Exception as exc:  # network / API error — keep going
+        else:
             failed += 1
-            logger.error("Failed to send Telegram message part: %s", exc)
 
     if failed:
         raise TelegramDeliveryError(
