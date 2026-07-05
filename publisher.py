@@ -125,25 +125,39 @@ def _dated_header(date_str: str) -> str:
     model to state the covered day (the prompt forbids the model its own title).
     """
     day = date.fromisoformat(date_str)
-    return f"🗓 **Дайджест по маркировке за {day.strftime('%d.%m.%Y')}**"
+    return f"🗓 **Дайджест чатов по маркировке за {day.strftime('%d.%m.%Y')}**"
+
+
+# A whole line that is only a Markdown horizontal rule (---, ***, ___, - - -).
+_HR_LINE = re.compile(r"^[ \t]*([-*_])(?:[ \t]*\1){2,}[ \t]*$", re.MULTILINE)
+
+
+def _strip_horizontal_rules(md: str) -> str:
+    """Drop horizontal-rule lines; Telegram shows them as literal '---' clutter.
+
+    Sections stay separated by the surrounding blank lines (runs collapsed).
+    """
+    md = _HR_LINE.sub("", md)
+    md = re.sub(r"\n{3,}", "\n\n", md)
+    return md.strip()
 
 
 def render_parts(digest: DigestResult, limit: int = _TELEGRAM_LIMIT) -> list[str]:
     """Render a Digest to ready-to-send Telegram HTML message parts.
 
-    Prepends a dated header (which day this digest covers) to the body, then
-    splits the raw markdown — sizing each chunk by its rendered HTML length —
-    and converts each chunk to HTML independently. The header lands on the first
-    part only. Splitting on the raw source guarantees a split never severs an
-    HTML tag or entity, so every part is valid under parse_mode=HTML. (In the
-    rare case an oversized single line is hard-split mid-``**bold**``, the
-    orphaned markers render as literal asterisks — content is preserved either
-    way.)
+    Prepends a dated header (which day this digest covers) to the body, strips
+    horizontal-rule lines, then splits the raw markdown — sizing each chunk by
+    its rendered HTML length — and converts each chunk to HTML independently.
+    The header lands on the first part only. Splitting on the raw source
+    guarantees a split never severs an HTML tag or entity, so every part is
+    valid under parse_mode=HTML. (In the rare case an oversized single line is
+    hard-split mid-``**bold**``, the orphaned markers render as literal
+    asterisks — content is preserved either way.)
     """
     def html_len(chunk: str) -> int:
         return len(markdown_to_telegram_html(chunk))
 
-    body = f"{_dated_header(digest.date)}\n\n{digest.markdown}"
+    body = f"{_dated_header(digest.date)}\n\n{_strip_horizontal_rules(digest.markdown)}"
     raw_parts = split_message(body, limit, measure=html_len)
     return [markdown_to_telegram_html(part) for part in raw_parts]
 

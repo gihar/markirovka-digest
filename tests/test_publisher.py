@@ -73,21 +73,30 @@ def test_markdown_to_html_escapes_then_formats():
 
 def test_render_parts_prepends_dated_header():
     parts = render_parts(_digest("**Итоги** дня"))
-    assert parts[0].startswith("🗓 <b>Дайджест по маркировке за 04.07.2026</b>")
+    assert parts[0].startswith("🗓 <b>Дайджест чатов по маркировке за 04.07.2026</b>")
     assert "<b>Итоги</b> дня" in parts[0]
 
 
 def test_render_parts_short_digest_is_one_html_part():
     parts = render_parts(_digest("**Итоги** дня"), limit=4096)
-    assert parts == ["🗓 <b>Дайджест по маркировке за 04.07.2026</b>\n\n<b>Итоги</b> дня"]
+    assert parts == ["🗓 <b>Дайджест чатов по маркировке за 04.07.2026</b>\n\n<b>Итоги</b> дня"]
+
+
+def test_render_parts_strips_horizontal_rules():
+    parts = render_parts(_digest("Раздел 1\n\n---\n\nРаздел 2\n\n***\n\nРаздел 3"))
+    body = parts[0]
+    assert "---" not in body
+    assert "***" not in body
+    assert "Раздел 1" in body and "Раздел 2" in body and "Раздел 3" in body
+    assert "\n\n\n" not in body  # blank runs collapsed, no gaping gaps
 
 
 def test_dated_header_only_on_first_part_when_split():
     long_md = "\n".join(f"строка {i}" for i in range(300))
     parts = render_parts(_digest(long_md), limit=200)
     assert len(parts) > 1
-    assert parts[0].startswith("🗓 <b>Дайджест по маркировке за 04.07.2026</b>")
-    assert all("Дайджест по маркировке за" not in p for p in parts[1:])
+    assert parts[0].startswith("🗓 <b>Дайджест чатов по маркировке за 04.07.2026</b>")
+    assert all("Дайджест чатов по маркировке за" not in p for p in parts[1:])
 
 
 def test_render_parts_long_digest_is_split_under_limit():
