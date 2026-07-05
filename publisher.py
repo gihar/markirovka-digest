@@ -1,12 +1,16 @@
-"""Publish digest to GitHub Issues and Telegram.
+"""Publish the Digest to Telegram.
 
-Delivers the generated digest to configured destinations with graceful
-degradation: if one target fails, the other is still attempted.
+Telegram-only: GitHub Issues were dropped when the Digest Service moved off
+GitHub Actions (the digest channel is its own archive). Long digests are split
+into several messages rather than truncated. Synchronous — the pipeline no
+longer uses asyncio.
 """
 
 import html
 import logging
 import re
+import time
+from typing import Callable
 
 import httpx
 
@@ -15,129 +19,206 @@ from models import DigestResult
 
 logger = logging.getLogger(__name__)
 
-# Telegram message limit is 4096 chars; leave room for the link footer
-_TELEGRAM_TRUNCATE_AT: int = 3700
-_TELEGRAM_MAX_LENGTH: int = 3800
+# Telegram's hard limit for a single message.
+_TELEGRAM_LIMIT: int = 4096
 _HTTP_TIMEOUT: int = 30
+
+# Pace multi-part sends: Telegram's per-chat flood limit is ~1 message/second.
+_TELEGRAM_SEND_INTERVAL: float = 1.0
+# Bounded retries when Telegram asks us to wait (HTTP 429 + retry_after).
+_MAX_FLOOD_RETRIES: int = 2
+# Fallback wait if a 429 carries no retry_after we can read.
+_DEFAULT_RETRY_AFTER: float = 3.0
+
+
+class TelegramDeliveryError(RuntimeError):
+    """Raised when one or more Telegram message parts failed to send."""
+
+
+class TelegramFloodError(Exception):
+    """Raised on HTTP 429 — Telegram asked us to wait ``retry_after`` seconds."""
+
+    def __init__(self, retry_after: float) -> None:
+        self.retry_after = retry_after
+        super().__init__(f"Telegram flood wait: {retry_after}s")
 
 
 def markdown_to_telegram_html(md: str) -> str:
-    """Convert markdown text to Telegram-compatible HTML.
+    """Convert markdown to Telegram-compatible HTML.
 
-    Steps:
-        1. Escape all HTML entities in raw text first.
-        2. Convert markdown bold (**text**) to <b>text</b>.
-        3. Convert markdown headers (## Header) to <b>Header</b>.
-        4. Preserve line breaks.
+    Escapes HTML entities first, then converts headers and bold/italic. Bold and
+    italic stay within a single line, so line-boundary splitting never cuts a tag
+    unless one line alone exceeds the Telegram limit.
     """
-    # Step 1: escape HTML entities in the raw text
     text = html.escape(md)
-
-    # Step 2: convert headers (## Header) — must come before bold
-    # Match lines starting with one or more # followed by space and text
+    # Headers (## Header) must be handled before bold.
     text = re.sub(r"^#{1,6}\s+(.+)$", r"<b>\1</b>", text, flags=re.MULTILINE)
-
-    # Step 3: convert bold **text** to <b>text</b>
+    # Bold **text** before italic *text*.
     text = re.sub(r"\*\*(.+?)\*\*", r"<b>\1</b>", text)
-
-    # Step 4: convert italic *text* to <i>text</i> (single asterisk, not double)
     text = re.sub(r"\*(.+?)\*", r"<i>\1</i>", text)
-
     return text
 
 
-async def publish_github_issue(digest: DigestResult, config: Config) -> str | None:
-    """Create a GitHub issue with the digest content.
+def _largest_prefix(line: str, limit: int, measure: Callable[[str], int]) -> int:
+    """Return the largest k>=1 such that ``measure(line[:k]) <= limit``.
 
-    Args:
-        digest: The generated digest to publish.
-        config: Application configuration with GitHub credentials.
-
-    Returns:
-        The HTML URL of the created issue, or None if skipped/failed.
+    Binary search. Always returns at least 1 so hard-splitting makes progress
+    even if a single unit already exceeds the limit.
     """
-    if not config.github_token or not config.github_repository:
-        logger.info("GitHub not configured, skipping issue creation")
-        return None
-
-    url = f"https://api.github.com/repos/{config.github_repository}/issues"
-    headers = {
-        "Authorization": f"Bearer {config.github_token}",
-        "Accept": "application/vnd.github+json",
-    }
-    # Year-month label, e.g. "2026-03"
-    label = digest.date[:7]
-    payload = {
-        "title": f"\u0414\u0430\u0439\u0434\u0436\u0435\u0441\u0442: {digest.date}",
-        "body": digest.markdown,
-        "labels": ["digest", label],
-    }
-
-    try:
-        async with httpx.AsyncClient() as client:
-            resp = await client.post(
-                url, json=payload, headers=headers, timeout=_HTTP_TIMEOUT
-            )
-            resp.raise_for_status()
-            issue_url: str = resp.json()["html_url"]
-            logger.info("GitHub issue created: %s", issue_url)
-            return issue_url
-    except httpx.HTTPError as exc:
-        logger.error("Failed to create GitHub issue: %s", exc)
-        return None
-
-
-async def publish_telegram(
-    digest: DigestResult,
-    issue_url: str | None,
-    config: Config,
-) -> bool:
-    """Send digest to a Telegram chat via Bot API.
-
-    Args:
-        digest: The generated digest to publish.
-        issue_url: Optional link to the full GitHub issue.
-        config: Application configuration with Telegram credentials.
-
-    Returns:
-        True if the message was sent successfully, False otherwise.
-    """
-    if not config.telegram_bot_token or not config.telegram_digest_chat_id:
-        logger.info("Telegram not configured, skipping message")
-        return False
-
-    text = markdown_to_telegram_html(digest.markdown)
-
-    if len(text) > _TELEGRAM_MAX_LENGTH:
-        text = text[:_TELEGRAM_TRUNCATE_AT]
-        if issue_url:
-            text += f"\n\n<a href='{issue_url}'>\u041f\u043e\u043b\u043d\u044b\u0439 \u0434\u0430\u0439\u0434\u0436\u0435\u0441\u0442 \u2192</a>"
+    lo, hi, best = 1, len(line), 1
+    while lo <= hi:
+        mid = (lo + hi) // 2
+        if measure(line[:mid]) <= limit:
+            best = mid
+            lo = mid + 1
         else:
-            text += "\n\n<i>[\u0422\u0435\u043a\u0441\u0442 \u0441\u043e\u043a\u0440\u0430\u0449\u0451\u043d]</i>"
-
-    url = f"https://api.telegram.org/bot{config.telegram_bot_token}/sendMessage"
-    payload = {
-        "chat_id": config.telegram_digest_chat_id,
-        "text": text,
-        "parse_mode": "HTML",
-    }
-
-    try:
-        async with httpx.AsyncClient() as client:
-            resp = await client.post(url, json=payload, timeout=_HTTP_TIMEOUT)
-            resp.raise_for_status()
-            logger.info("Telegram message sent to %s", config.telegram_digest_chat_id)
-            return True
-    except httpx.HTTPError as exc:
-        logger.error("Failed to send Telegram message: %s", exc)
-        return False
+            hi = mid - 1
+    return best
 
 
-async def publish(digest: DigestResult, config: Config) -> None:
-    """Publish digest to all configured destinations.
+def split_message(
+    text: str,
+    limit: int = _TELEGRAM_LIMIT,
+    *,
+    measure: Callable[[str], int] = len,
+) -> list[str]:
+    """Split text into parts each with ``measure(part) <= limit``, losslessly.
 
-    Attempts GitHub first (to get the issue URL for Telegram), then Telegram.
-    Each target is independent: failure of one does not block the other.
+    Splits on line boundaries; a single line still too long is hard-split.
+    ``measure`` lets callers size by the *rendered* length (e.g. HTML) while
+    splitting the raw source, so a split never lands inside a produced tag or
+    entity. No non-newline character is dropped or duplicated; order is kept.
     """
-    issue_url = await publish_github_issue(digest, config)
-    await publish_telegram(digest, issue_url, config)
+    if measure(text) <= limit:
+        return [text]
+
+    parts: list[str] = []
+    current = ""
+    for line in text.split("\n"):
+        # A single line that is itself too long gets hard-split.
+        while measure(line) > limit:
+            if current:
+                parts.append(current)
+                current = ""
+            k = _largest_prefix(line, limit, measure)
+            parts.append(line[:k])
+            line = line[k:]
+
+        candidate = line if not current else f"{current}\n{line}"
+        if measure(candidate) <= limit:
+            current = candidate
+        else:
+            if current:
+                parts.append(current)
+            current = line
+
+    if current:
+        parts.append(current)
+    return parts
+
+
+def render_parts(digest: DigestResult, limit: int = _TELEGRAM_LIMIT) -> list[str]:
+    """Render a Digest to ready-to-send Telegram HTML message parts.
+
+    Splits the raw markdown — sizing each chunk by its rendered HTML length —
+    then converts each chunk to HTML independently. This guarantees a split
+    never severs an HTML tag or entity, so every part is valid under
+    parse_mode=HTML. (In the rare case an oversized single line is hard-split
+    mid-``**bold**``, the orphaned markers render as literal asterisks rather
+    than producing malformed HTML — content is preserved either way.)
+    """
+    def html_len(chunk: str) -> int:
+        return len(markdown_to_telegram_html(chunk))
+
+    raw_parts = split_message(digest.markdown, limit, measure=html_len)
+    return [markdown_to_telegram_html(part) for part in raw_parts]
+
+
+def _parse_retry_after(resp: httpx.Response) -> float:
+    """Extract the flood-wait seconds from a 429 response."""
+    try:
+        retry_after = resp.json().get("parameters", {}).get("retry_after")
+        if retry_after is not None:
+            return float(retry_after)
+    except (ValueError, AttributeError, TypeError):
+        pass
+    header = resp.headers.get("Retry-After")
+    return float(header) if header else _DEFAULT_RETRY_AFTER
+
+
+def _http_post(url: str, payload: dict) -> None:
+    """Send one POST to Telegram.
+
+    Raises TelegramFloodError on 429 (recoverable — wait and retry) and the
+    underlying httpx error on any other non-2xx.
+    """
+    with httpx.Client() as client:
+        resp = client.post(url, json=payload, timeout=_HTTP_TIMEOUT)
+        if resp.status_code == 429:
+            raise TelegramFloodError(_parse_retry_after(resp))
+        resp.raise_for_status()
+
+
+def _send_one(url, payload, post, sleep, max_flood_retries: int) -> bool:
+    """Send one part, honoring Telegram flood-waits. Returns True on success."""
+    for attempt in range(max_flood_retries + 1):
+        try:
+            post(url, payload)
+            return True
+        except TelegramFloodError as exc:
+            if attempt >= max_flood_retries:
+                logger.error("Flood limit not cleared after retries: %s", exc)
+                return False
+            logger.warning(
+                "Telegram flood: waiting %.1fs before retry", exc.retry_after
+            )
+            sleep(exc.retry_after)
+        except Exception as exc:  # network / API error — permanent for this part
+            logger.error("Failed to send Telegram message part: %s", exc)
+            return False
+    return False
+
+
+def send_parts(
+    parts: list[str],
+    token: str,
+    chat_id: str,
+    *,
+    post=_http_post,
+    sleep: Callable[[float], None] = time.sleep,
+    max_flood_retries: int = _MAX_FLOOD_RETRIES,
+    interval: float = _TELEGRAM_SEND_INTERVAL,
+) -> int:
+    """Send each part as a separate Telegram message. Returns parts sent.
+
+    Paces multi-part sends by ``interval`` to stay under Telegram's per-chat
+    flood limit, and honors a 429's retry_after with bounded retries. A part
+    that still fails is logged and does not stop the rest; if any part failed,
+    raises TelegramDeliveryError after attempting them all — so a cron run that
+    could not deliver the digest exits non-zero instead of looking successful.
+    """
+    url = f"https://api.telegram.org/bot{token}/sendMessage"
+    sent = 0
+    failed = 0
+    for i, part in enumerate(parts):
+        if i > 0:
+            sleep(interval)  # pace to stay under the per-chat flood limit
+        payload = {"chat_id": chat_id, "text": part, "parse_mode": "HTML"}
+        if _send_one(url, payload, post, sleep, max_flood_retries):
+            sent += 1
+        else:
+            failed += 1
+
+    if failed:
+        raise TelegramDeliveryError(
+            f"{failed} of {len(parts)} Telegram message part(s) failed to send"
+        )
+    return sent
+
+
+def publish(digest: DigestResult, config: Config) -> int:
+    """Publish the Digest to the Telegram digest channel. Returns parts sent."""
+    parts = render_parts(digest)
+    return send_parts(
+        parts, config.telegram_bot_token, config.telegram_digest_chat_id
+    )
