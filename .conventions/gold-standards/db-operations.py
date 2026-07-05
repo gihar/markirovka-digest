@@ -6,6 +6,8 @@ Rules:
 - Use parameterized queries exclusively (%(name)s placeholders, never f-strings).
 - Return frozen dataclasses from queries, not raw rows.
 - One short-lived connection per run (psycopg 3); no global state.
+- Depend defensively on optional scraper tables: probe with to_regclass and add
+  the clause only when present, so a not-yet-deployed table can't break the read.
 Extracted from db.py.
 """
 
@@ -16,7 +18,9 @@ import psycopg
 
 from models import TelegramMessage
 
-_QUERY = """
+# {spam_filter} is filled only when the scraper's optional spam_users table
+# exists; the clause is a fixed literal (no interpolated data).
+_QUERY_TEMPLATE = """
 SELECT
     c.title                                        AS chat_title,
     COALESCE(u.username, u.first_name, 'Unknown')  AS sender_name,
@@ -31,8 +35,22 @@ WHERE m.chat_id = ANY(%(chat_ids)s)
   AND COALESCE(m.text, m.caption) IS NOT NULL
   AND char_length(COALESCE(m.text, m.caption)) >= %(min_length)s
   AND u.is_bot IS NOT TRUE
+  {spam_filter}
 ORDER BY c.title, m.sent_at
 """
+
+_SPAM_EXCLUSION = """
+  AND NOT EXISTS (
+      SELECT 1 FROM spam_users su
+      WHERE su.chat_id = m.chat_id AND su.user_id = m.user_id
+  )"""
+
+
+def _spam_exclusion(conn: psycopg.Connection) -> str:
+    """Return the spam clause iff the scraper's spam_users table exists."""
+    with conn.cursor() as cur:
+        cur.execute("SELECT to_regclass('spam_users')")
+        return _SPAM_EXCLUSION if cur.fetchone()[0] is not None else ""
 
 
 def fetch_digest_messages(
@@ -42,9 +60,10 @@ def fetch_digest_messages(
     min_length: int,
 ) -> list[TelegramMessage]:
     """Return messages for ``day`` (Europe/Moscow) across the allow-listed chats."""
+    query = _QUERY_TEMPLATE.format(spam_filter=_spam_exclusion(conn))
     with conn.cursor() as cur:
         cur.execute(
-            _QUERY,
+            query,
             {"chat_ids": list(chat_ids), "day": day, "min_length": min_length},
         )
         rows = cur.fetchall()

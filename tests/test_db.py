@@ -29,6 +29,66 @@ def _msg(conn, chat_id, message_id, user_id, sent_at, text=None, caption=None):
     )
 
 
+# Subset of clio's spam_users table — the columns the digest filter reads.
+_SPAM_USERS_DDL = """
+CREATE TABLE spam_users (
+    chat_id  BIGINT NOT NULL,
+    user_id  BIGINT NOT NULL,
+    muted_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (chat_id, user_id)
+)
+"""
+
+
+def _flag_spam(conn, chat_id: int, user_id: int):
+    conn.execute(
+        "INSERT INTO spam_users (chat_id, user_id) VALUES (%s, %s)",
+        (chat_id, user_id),
+    )
+
+
+def test_excludes_messages_from_spam_flagged_users(pg_conn):
+    pg_conn.execute(_SPAM_USERS_DDL)
+    _chat(pg_conn, -1001, "Маркировка")
+    _user(pg_conn, 5, username="ivan")
+    _user(pg_conn, 7, username="spammer")
+    at = datetime(2026, 7, 4, 10, 0, tzinfo=UTC)
+    _msg(pg_conn, -1001, 1, 5, at, text="содержательное сообщение по маркировке")
+    _msg(pg_conn, -1001, 2, 7, at, text="реклама заработка без вложений")
+    _flag_spam(pg_conn, -1001, 7)
+
+    messages = fetch_digest_messages(pg_conn, [-1001], DAY, min_length=1)
+
+    assert [m.text for m in messages] == ["содержательное сообщение по маркировке"]
+
+
+def test_spam_flag_is_chat_scoped(pg_conn):
+    pg_conn.execute(_SPAM_USERS_DDL)
+    _chat(pg_conn, -1001, "Чат А")
+    _chat(pg_conn, -1002, "Чат Б")
+    _user(pg_conn, 7, username="user7")
+    at = datetime(2026, 7, 4, 10, 0, tzinfo=UTC)
+    _msg(pg_conn, -1001, 1, 7, at, text="в чате А, где юзер помечен спамом")
+    _msg(pg_conn, -1002, 1, 7, at, text="в чате Б, где флага нет")
+    _flag_spam(pg_conn, -1001, 7)  # spam only in chat -1001
+
+    messages = fetch_digest_messages(pg_conn, [-1001, -1002], DAY, min_length=1)
+
+    assert [m.text for m in messages] == ["в чате Б, где флага нет"]
+
+
+def test_works_when_spam_users_table_is_absent(pg_conn):
+    # pg_conn starts without spam_users — the read must not break.
+    _chat(pg_conn, -1001, "Маркировка")
+    _user(pg_conn, 5, username="ivan")
+    _msg(pg_conn, -1001, 1, 5, datetime(2026, 7, 4, 10, 0, tzinfo=UTC),
+         text="сообщение по маркировке")
+
+    messages = fetch_digest_messages(pg_conn, [-1001], DAY, min_length=1)
+
+    assert [m.text for m in messages] == ["сообщение по маркировке"]
+
+
 def test_excludes_messages_from_bot_accounts(pg_conn):
     _chat(pg_conn, -1001, "Маркировка")
     _user(pg_conn, 9, username="spambot", is_bot=True)

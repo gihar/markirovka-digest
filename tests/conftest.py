@@ -95,7 +95,10 @@ def _pg_container():
 
 @pytest.fixture
 def pg_conn(_pg_container):
-    """A clean connection: truncates the seed tables before each test."""
+    """A clean connection: each test starts with the seed tables truncated and
+    no ``spam_users`` table (clio's spam list is optional — tests that need it
+    create it themselves, which also keeps the table-absent path covered)."""
     with psycopg.connect(_pg_container, autocommit=True) as conn:
+        conn.execute("DROP TABLE IF EXISTS spam_users")
         conn.execute("TRUNCATE messages, users, chats RESTART IDENTITY CASCADE")
         yield conn

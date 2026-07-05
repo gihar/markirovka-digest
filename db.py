@@ -22,7 +22,10 @@ from models import TelegramMessage
 # ::date on that is the Moscow calendar day (independent of session timezone).
 # Bot-authored messages are excluded (u.is_bot IS NOT TRUE also keeps rows with
 # no user, where the LEFT JOIN yields NULL).
-_QUERY = """
+# {spam_filter} is filled with the spam-user exclusion iff the Scraper's
+# spam_users table is present (see _spam_exclusion); the clause is a fixed
+# literal with no interpolated data.
+_QUERY_TEMPLATE = """
 SELECT
     c.title                                        AS chat_title,
     COALESCE(u.username, u.first_name, 'Unknown')  AS sender_name,
@@ -37,8 +40,17 @@ WHERE m.chat_id = ANY(%(chat_ids)s)
   AND COALESCE(m.text, m.caption) IS NOT NULL
   AND char_length(COALESCE(m.text, m.caption)) >= %(min_length)s
   AND u.is_bot IS NOT TRUE
+  {spam_filter}
 ORDER BY c.title, m.sent_at
 """
+
+# Chat-scoped, whole-user spam exclusion — the predicate clio (the Scraper)
+# documents for consumers of its spam_users table.
+_SPAM_EXCLUSION = """
+  AND NOT EXISTS (
+      SELECT 1 FROM spam_users su
+      WHERE su.chat_id = m.chat_id AND su.user_id = m.user_id
+  )"""
 
 
 def connect(database_url: str) -> psycopg.Connection:
@@ -58,6 +70,18 @@ def _row_to_message(row: tuple) -> TelegramMessage:
     )
 
 
+def _spam_exclusion(conn: psycopg.Connection) -> str:
+    """Return the spam clause iff the Scraper's spam_users table exists.
+
+    The Scraper owns spam_users and may not have deployed it yet; referencing a
+    missing table would fail the whole read. Probing keeps the Digest Service
+    working before the table lands and turns the filter on automatically after.
+    """
+    with conn.cursor() as cur:
+        cur.execute("SELECT to_regclass('spam_users')")
+        return _SPAM_EXCLUSION if cur.fetchone()[0] is not None else ""
+
+
 def fetch_digest_messages(
     conn: psycopg.Connection,
     chat_ids: Sequence[int],
@@ -66,12 +90,14 @@ def fetch_digest_messages(
 ) -> list[TelegramMessage]:
     """Return messages for ``day`` (Europe/Moscow) across the allow-listed chats.
 
-    Filters out empty/too-short content and non-allow-listed chats. Ordered by
-    chat title, then time.
+    Filters out empty/too-short content, bot authors, spam-flagged users (when
+    the Scraper's spam_users table is available), and non-allow-listed chats.
+    Ordered by chat title, then time.
     """
+    query = _QUERY_TEMPLATE.format(spam_filter=_spam_exclusion(conn))
     with conn.cursor() as cur:
         cur.execute(
-            _QUERY,
+            query,
             {"chat_ids": list(chat_ids), "day": day, "min_length": min_length},
         )
         rows = cur.fetchall()
