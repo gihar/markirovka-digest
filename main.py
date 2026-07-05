@@ -55,7 +55,14 @@ def run() -> None:
             fetch_messages=lambda: fetch_digest_messages(
                 conn, chat_ids, day, config.min_message_length
             ),
-            generate=generate_digest,
+            generate=lambda msgs, prompt_path, date_str: generate_digest(
+                msgs,
+                prompt_path,
+                date_str,
+                base_url=config.llm_base_url,
+                api_key=config.llm_api_key,
+                model=config.llm_model,
+            ),
             publish_digest=lambda digest: publish(digest, config),
         )
     finally:

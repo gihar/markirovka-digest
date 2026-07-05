@@ -24,9 +24,9 @@ and holds no user Telegram session.
 
 ### Digest
 The generated summary (Markdown) of chat activity over a time window, produced
-by Claude and delivered to its publish targets. **Cross-chat** (spans multiple
-Monitored Chats) and **scheduled** (produced once per day). Distinct from a
-Chat Summary.
+by an LLM (any OpenAI-compatible endpoint — configurable) and delivered to its
+publish targets. **Cross-chat** (spans multiple Monitored Chats) and
+**scheduled** (produced once per day). Distinct from a Chat Summary.
 
 ### Chat Summary
 A **single-chat**, **on-demand** summary produced by the Scraper itself (clio)

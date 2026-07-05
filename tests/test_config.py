@@ -38,7 +38,9 @@ def test_empty_allow_list_is_rejected(tmp_path):
 
 _ALL_ENV = {
     "DATABASE_URL": "postgresql://u:p@host:5432/db",
-    "ANTHROPIC_API_KEY": "sk-test",
+    "LLM_BASE_URL": "https://openrouter.ai/api/v1",
+    "LLM_API_KEY": "sk-or-test",
+    "LLM_MODEL": "anthropic/claude-sonnet-4.6",
     "TELEGRAM_BOT_TOKEN": "123:abc",
     "TELEGRAM_DIGEST_CHAT_ID": "-1009999",
 }
@@ -58,13 +60,25 @@ def test_load_config_fails_fast_when_database_url_missing(tmp_path, monkeypatch)
         load_config()
 
 
-def test_load_config_reads_database_url_and_allow_list(tmp_path, monkeypatch):
+def test_load_config_fails_fast_when_llm_model_missing(tmp_path, monkeypatch):
+    _point_config_at(tmp_path, monkeypatch)
+    for k, v in _ALL_ENV.items():
+        monkeypatch.setenv(k, v)
+    monkeypatch.delenv("LLM_MODEL", raising=False)
+    with pytest.raises(ValueError, match="LLM_MODEL"):
+        load_config()
+
+
+def test_load_config_reads_llm_params_and_allow_list(tmp_path, monkeypatch):
     _point_config_at(tmp_path, monkeypatch)
     for k, v in _ALL_ENV.items():
         monkeypatch.setenv(k, v)
     cfg = load_config()
     assert cfg.database_url == "postgresql://u:p@host:5432/db"
+    assert cfg.llm_base_url == "https://openrouter.ai/api/v1"
+    assert cfg.llm_api_key == "sk-or-test"
+    assert cfg.llm_model == "anthropic/claude-sonnet-4.6"
     assert [c.chat_id for c in cfg.channels] == [-1001]
     assert cfg.min_message_length == 30  # default when settings omit it
+    assert not hasattr(cfg, "anthropic_api_key")
     assert not hasattr(cfg, "telegram_session")
-    assert not hasattr(cfg, "github_token")

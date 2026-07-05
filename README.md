@@ -15,7 +15,7 @@ into a PostgreSQL **Message Store** on Railway; this service only reads from it.
 ```
 clio (scraper, always-on) ──writes──▶ PostgreSQL (Message Store) ◀──reads (read-only)── markirovka-digest (Railway Cron, 09:00 MSK)
                                        chats / users / messages                               │
-                                                                                     Claude ◀─┘
+                                                                              LLM (OpenAI-compat) ◀─┘
                                                                                        │
                                                                                        ▼
                                                                     Telegram: digest channel (poster bot)
@@ -28,7 +28,7 @@ Domain vocabulary is in [`CONTEXT.md`](CONTEXT.md).
 1. Compute the **Digest Window**: the previous calendar day in `Europe/Moscow`.
 2. Read messages for that day across the allow-listed chats from the Message Store.
 3. If there are none, log and exit (nothing is posted on a quiet day).
-4. Otherwise generate the digest with Claude and post it to the Telegram channel,
+4. Otherwise generate the digest via the LLM and post it to the Telegram channel,
    splitting into several messages if it exceeds Telegram's 4096-char limit.
 
 | Module | Responsibility |
@@ -36,7 +36,7 @@ Domain vocabulary is in [`CONTEXT.md`](CONTEXT.md).
 | `config.py` | Env vars + the chat allow-list (`channels.toml`) |
 | `window.py` | The previous-MSK-day helper |
 | `db.py` | Read-only PostgreSQL access (psycopg 3) |
-| `analyzer.py` | Format messages, call Claude |
+| `analyzer.py` | Format messages, call the LLM (OpenAI-compatible) |
 | `publisher.py` | Telegram-only delivery with message splitting |
 | `main.py` | Orchestration |
 
@@ -47,7 +47,9 @@ Environment variables (see [`.env.example`](.env.example)):
 | Variable | Description |
 |----------|-------------|
 | `DATABASE_URL` | The scraper's PostgreSQL connection string (read-only use) |
-| `ANTHROPIC_API_KEY` | Claude API key |
+| `LLM_BASE_URL` | OpenAI-compatible base URL up to `/v1` (e.g. `https://openrouter.ai/api/v1`) |
+| `LLM_API_KEY` | Bearer token for the LLM endpoint |
+| `LLM_MODEL` | Provider model id (e.g. `anthropic/claude-sonnet-4.6`) |
 | `TELEGRAM_BOT_TOKEN` | Bot that posts the digest |
 | `TELEGRAM_DIGEST_CHAT_ID` | Destination channel/chat id |
 

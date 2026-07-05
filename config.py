@@ -19,13 +19,12 @@ PROJECT_ROOT: Path = Path(__file__).resolve().parent
 PROMPT_PATH: Path = PROJECT_ROOT / "prompts" / "digest.md"
 CHANNELS_PATH: Path = PROJECT_ROOT / "channels.toml"
 
-# Claude token limit before truncating the message payload
-MAX_CONTEXT_TOKENS: int = 120_000
-
 # Required environment variables — the pipeline cannot run without these.
 REQUIRED_ENV: tuple[str, ...] = (
     "DATABASE_URL",
-    "ANTHROPIC_API_KEY",
+    "LLM_BASE_URL",
+    "LLM_API_KEY",
+    "LLM_MODEL",
     "TELEGRAM_BOT_TOKEN",
     "TELEGRAM_DIGEST_CHAT_ID",
 )
@@ -36,7 +35,9 @@ class Config:
     """Immutable application configuration."""
 
     database_url: str
-    anthropic_api_key: str
+    llm_base_url: str
+    llm_api_key: str
+    llm_model: str
     telegram_bot_token: str
     telegram_digest_chat_id: str
     channels: tuple[ChannelConfig, ...]
@@ -93,7 +94,9 @@ def load_config() -> Config:
 
     return Config(
         database_url=_require_env("DATABASE_URL"),
-        anthropic_api_key=_require_env("ANTHROPIC_API_KEY"),
+        llm_base_url=_require_env("LLM_BASE_URL"),
+        llm_api_key=_require_env("LLM_API_KEY"),
+        llm_model=_require_env("LLM_MODEL"),
         telegram_bot_token=_require_env("TELEGRAM_BOT_TOKEN"),
         telegram_digest_chat_id=_require_env("TELEGRAM_DIGEST_CHAT_ID"),
         channels=channels,
