@@ -1,7 +1,10 @@
 """Behavior: publish the Digest to Telegram, splitting long text losslessly."""
 
+import pytest
+
 from models import DigestResult
 from publisher import (
+    TelegramDeliveryError,
     markdown_to_telegram_html,
     render_parts,
     send_parts,
@@ -76,6 +79,29 @@ def test_render_parts_long_digest_is_split_under_limit():
     assert all(len(p) <= 500 for p in parts)
 
 
+def test_oversized_line_never_cuts_an_html_entity():
+    # One line (no newlines) far over the limit, full of '&' — each escapes to
+    # '&amp;'. A naive hard-split of the HTML would sever an entity, which
+    # Telegram rejects under parse_mode=HTML.
+    parts = render_parts(_digest("&" * 300), limit=100)
+
+    assert len(parts) > 1
+    assert all(len(p) <= 100 for p in parts)
+    # Every '&' is part of a complete '&amp;' — none was cut.
+    assert all(p.replace("&amp;", "").count("&") == 0 for p in parts)
+    assert "".join(parts).count("&amp;") == 300  # nothing lost
+
+
+def test_oversized_bold_line_splits_without_malformed_tags():
+    md = "**" + ("слово " * 200).strip() + "**"
+    parts = render_parts(_digest(md), limit=120)
+
+    assert len(parts) > 1
+    for p in parts:
+        assert len(p) <= 120
+        assert p.count("<") == p.count(">")  # no half-cut tag
+
+
 def test_send_parts_posts_each_part_with_html_payload():
     calls = []
     send_parts(
@@ -94,7 +120,7 @@ def test_send_parts_posts_each_part_with_html_payload():
     ]
 
 
-def test_send_parts_continues_after_a_failed_part():
+def test_send_parts_attempts_every_part_then_raises_on_failure():
     sent = []
 
     def flaky(url, payload):
@@ -102,8 +128,15 @@ def test_send_parts_continues_after_a_failed_part():
             raise RuntimeError("network")
         sent.append(payload["text"])
 
-    count = send_parts(
-        ["ok1", "boom", "ok2"], token="t", chat_id="-1", post=flaky
-    )
+    with pytest.raises(TelegramDeliveryError):
+        send_parts(["ok1", "boom", "ok2"], token="t", chat_id="-1", post=flaky)
+
+    # Remaining parts are still attempted before the failure is surfaced.
     assert sent == ["ok1", "ok2"]
+
+
+def test_send_parts_returns_count_when_all_succeed():
+    count = send_parts(
+        ["a", "b"], token="t", chat_id="-1", post=lambda url, payload: None
+    )
     assert count == 2

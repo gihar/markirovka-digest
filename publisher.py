@@ -9,6 +9,7 @@ longer uses asyncio.
 import html
 import logging
 import re
+from typing import Callable
 
 import httpx
 
@@ -20,6 +21,10 @@ logger = logging.getLogger(__name__)
 # Telegram's hard limit for a single message.
 _TELEGRAM_LIMIT: int = 4096
 _HTTP_TIMEOUT: int = 30
+
+
+class TelegramDeliveryError(RuntimeError):
+    """Raised when one or more Telegram message parts failed to send."""
 
 
 def markdown_to_telegram_html(md: str) -> str:
@@ -38,31 +43,57 @@ def markdown_to_telegram_html(md: str) -> str:
     return text
 
 
-def split_message(text: str, limit: int = _TELEGRAM_LIMIT) -> list[str]:
-    """Split text into parts of at most ``limit`` chars without losing content.
+def _largest_prefix(line: str, limit: int, measure: Callable[[str], int]) -> int:
+    """Return the largest k>=1 such that ``measure(line[:k]) <= limit``.
 
-    Splits on line boundaries; a single line longer than ``limit`` is hard-split.
-    No non-newline character is dropped or duplicated, and order is preserved.
+    Binary search. Always returns at least 1 so hard-splitting makes progress
+    even if a single unit already exceeds the limit.
     """
-    if len(text) <= limit:
+    lo, hi, best = 1, len(line), 1
+    while lo <= hi:
+        mid = (lo + hi) // 2
+        if measure(line[:mid]) <= limit:
+            best = mid
+            lo = mid + 1
+        else:
+            hi = mid - 1
+    return best
+
+
+def split_message(
+    text: str,
+    limit: int = _TELEGRAM_LIMIT,
+    *,
+    measure: Callable[[str], int] = len,
+) -> list[str]:
+    """Split text into parts each with ``measure(part) <= limit``, losslessly.
+
+    Splits on line boundaries; a single line still too long is hard-split.
+    ``measure`` lets callers size by the *rendered* length (e.g. HTML) while
+    splitting the raw source, so a split never lands inside a produced tag or
+    entity. No non-newline character is dropped or duplicated; order is kept.
+    """
+    if measure(text) <= limit:
         return [text]
 
     parts: list[str] = []
     current = ""
     for line in text.split("\n"):
         # A single line that is itself too long gets hard-split.
-        while len(line) > limit:
+        while measure(line) > limit:
             if current:
                 parts.append(current)
                 current = ""
-            parts.append(line[:limit])
-            line = line[limit:]
+            k = _largest_prefix(line, limit, measure)
+            parts.append(line[:k])
+            line = line[k:]
 
         candidate = line if not current else f"{current}\n{line}"
-        if len(candidate) <= limit:
+        if measure(candidate) <= limit:
             current = candidate
         else:
-            parts.append(current)
+            if current:
+                parts.append(current)
             current = line
 
     if current:
@@ -71,8 +102,20 @@ def split_message(text: str, limit: int = _TELEGRAM_LIMIT) -> list[str]:
 
 
 def render_parts(digest: DigestResult, limit: int = _TELEGRAM_LIMIT) -> list[str]:
-    """Render a Digest to ready-to-send Telegram HTML message parts."""
-    return split_message(markdown_to_telegram_html(digest.markdown), limit)
+    """Render a Digest to ready-to-send Telegram HTML message parts.
+
+    Splits the raw markdown — sizing each chunk by its rendered HTML length —
+    then converts each chunk to HTML independently. This guarantees a split
+    never severs an HTML tag or entity, so every part is valid under
+    parse_mode=HTML. (In the rare case an oversized single line is hard-split
+    mid-``**bold**``, the orphaned markers render as literal asterisks rather
+    than producing malformed HTML — content is preserved either way.)
+    """
+    def html_len(chunk: str) -> int:
+        return len(markdown_to_telegram_html(chunk))
+
+    raw_parts = split_message(digest.markdown, limit, measure=html_len)
+    return [markdown_to_telegram_html(part) for part in raw_parts]
 
 
 def _http_post(url: str, payload: dict) -> None:
@@ -91,17 +134,27 @@ def send_parts(
 ) -> int:
     """Send each part as a separate Telegram message. Returns parts sent.
 
-    A failed part is logged and does not stop the remaining parts.
+    A failed part is logged but does not stop the remaining parts. If any part
+    failed, raises TelegramDeliveryError after attempting them all — so a cron
+    run that could not deliver the digest exits non-zero instead of looking
+    successful.
     """
     url = f"https://api.telegram.org/bot{token}/sendMessage"
     sent = 0
+    failed = 0
     for part in parts:
         payload = {"chat_id": chat_id, "text": part, "parse_mode": "HTML"}
         try:
             post(url, payload)
             sent += 1
         except Exception as exc:  # network / API error — keep going
+            failed += 1
             logger.error("Failed to send Telegram message part: %s", exc)
+
+    if failed:
+        raise TelegramDeliveryError(
+            f"{failed} of {len(parts)} Telegram message part(s) failed to send"
+        )
     return sent
 
 
