@@ -1,46 +1,68 @@
-"""Pipeline orchestrator — thin entry point that wires modules together."""
+"""Pipeline orchestrator — read the Message Store, generate the Digest, post it.
 
-import asyncio
-from datetime import datetime, timedelta, timezone
+Synchronous: the Digest Service is a read-only consumer (ADR-0001), so there is
+no Telegram ingestion and no asyncio. Runs once (Railway Cron) and exits.
+"""
 
-from config import load_config
-from db import init_db, fetch_messages_since
-from downloader import download_messages
+import logging
+from datetime import UTC, date, datetime
+from pathlib import Path
+from typing import Callable
+
 from analyzer import generate_digest
+from config import Config, load_config
+from db import connect, fetch_digest_messages
+from models import DigestResult, TelegramMessage
 from publisher import publish
+from window import previous_msk_day
+
+logger = logging.getLogger(__name__)
 
 
-async def run_pipeline() -> None:
-    """Execute the full digest pipeline: download, analyze, publish."""
-    config = load_config()
-    conn = init_db(config.db_path)
+def run_pipeline(
+    day: date,
+    prompt_path: Path,
+    fetch_messages: Callable[[], list[TelegramMessage]],
+    generate: Callable[[list[TelegramMessage], Path, str], DigestResult],
+    publish_digest: Callable[[DigestResult], int],
+) -> int | None:
+    """Run the digest pipeline for ``day``.
 
-    try:
-        # Step 1: Download new messages from Telegram channels
-        new_count = await download_messages(config, conn)
-        print(f"Downloaded {new_count} new messages")
+    Returns the number of Telegram parts sent, or None if there were no messages
+    to digest (nothing is published on a quiet day).
+    """
+    messages = fetch_messages()
+    if not messages:
+        logger.info("No messages for %s — nothing to publish", day)
+        return None
 
-        # Step 2: Fetch messages within the digest window
-        since = datetime.now(timezone.utc) - timedelta(hours=config.digest_hours)
-        messages = fetch_messages_since(conn, since)
-        if not messages:
-            print("No messages to digest")
-            return
-
-        # Step 3: Generate digest via Claude
-        digest = generate_digest(messages, config.prompt_path)
-
-        # Step 4: Publish to GitHub Issues and Telegram
-        await publish(digest, config)
-
-        print(f"Digest published: {digest.date} ({digest.message_count} messages)")
-    finally:
-        conn.close()
+    digest = generate(messages, prompt_path, day.isoformat())
+    return publish_digest(digest)
 
 
 def run() -> None:
-    """Synchronous entry point for CLI and CI usage."""
-    asyncio.run(run_pipeline())
+    """Wire real collaborators and run the pipeline once."""
+    logging.basicConfig(level=logging.INFO)
+    config: Config = load_config()
+    day = previous_msk_day(datetime.now(tz=UTC))
+    chat_ids = [c.chat_id for c in config.channels]
+
+    conn = connect(config.database_url)
+    try:
+        parts = run_pipeline(
+            day=day,
+            prompt_path=config.prompt_path,
+            fetch_messages=lambda: fetch_digest_messages(
+                conn, chat_ids, day, config.min_message_length
+            ),
+            generate=generate_digest,
+            publish_digest=lambda digest: publish(digest, config),
+        )
+    finally:
+        conn.close()
+
+    if parts is not None:
+        logger.info("Digest for %s published in %d Telegram message(s)", day, parts)
 
 
 if __name__ == "__main__":

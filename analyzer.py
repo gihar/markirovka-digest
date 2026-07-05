@@ -13,9 +13,12 @@ import anthropic
 
 from config import MAX_CONTEXT_TOKENS
 from models import DigestResult, TelegramMessage
+from window import MSK
 
 logger = logging.getLogger(__name__)
 
+# Current, active Claude model. On Sonnet 4.6 an omitted `thinking` field runs
+# without thinking, so the whole MAX_OUTPUT_TOKENS budget goes to the digest.
 MODEL: str = "claude-sonnet-4-6"
 MAX_OUTPUT_TOKENS: int = 4096
 
@@ -28,8 +31,8 @@ def _load_prompt(prompt_path: Path) -> str:
 
 
 def _format_message(msg: TelegramMessage) -> str:
-    """Format a single message as a markdown line."""
-    time_str = msg.date.strftime("%H:%M")
+    """Format a single message as a markdown line, timestamped in Moscow time."""
+    time_str = msg.date.astimezone(MSK).strftime("%H:%M")
     sender = msg.sender_name or "Unknown"
     return f"[{time_str}] **{sender}**: {msg.text}"
 
