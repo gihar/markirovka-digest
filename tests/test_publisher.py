@@ -106,6 +106,53 @@ def test_render_parts_long_digest_is_split_under_limit():
     assert all(len(p) <= 500 for p in parts)
 
 
+def test_continuation_marker_on_part_after_first_when_split():
+    long_md = "\n".join(f"строка {i}" for i in range(300))
+    parts = render_parts(_digest(long_md), limit=200)
+    assert len(parts) > 1
+    assert not parts[0].startswith("<i>(продолжение)</i>")
+    assert parts[1].startswith("<i>(продолжение)</i>\n\n")
+
+
+def test_continuation_marker_is_reserved_so_parts_stay_under_limit():
+    # Uniform 2-char lines pack to exactly the limit under a naive full-limit
+    # split (3k-1 == 200 at k=67), so blindly prepending the 22-char marker
+    # afterwards would push a part to 222 > 200. The marker must be reserved.
+    limit = 200
+    parts = render_parts(_digest("\n".join(["ab"] * 400)), limit=limit)
+    assert len(parts) > 1
+    assert parts[1].startswith("<i>(продолжение)</i>\n\n")
+    assert all(len(p) <= limit for p in parts)
+
+
+def test_continuation_marker_on_every_part_after_the_first():
+    long_md = "\n".join(f"строка номер {i}" for i in range(300))
+    parts = render_parts(_digest(long_md), limit=200)
+    assert len(parts) >= 3  # at least three messages, to exercise parts[2]+
+    assert not parts[0].startswith("<i>(продолжение)</i>")
+    assert all(p.startswith("<i>(продолжение)</i>\n\n") for p in parts[1:])
+
+
+def test_single_part_digest_has_no_continuation_marker():
+    parts = render_parts(_digest("**Итоги** дня"), limit=4096)
+    assert len(parts) == 1
+    assert "(продолжение)" not in parts[0]
+
+
+def test_split_digest_content_is_lossless_after_removing_markers():
+    # Removing the injected header and every continuation marker must leave the
+    # original digest content intact (compared on non-newline chars, since a
+    # split drops the boundary newline just as it did before this change).
+    lines = [f"строка {i}" for i in range(300)]
+    body_md = "\n".join(lines)
+    parts = render_parts(_digest(body_md), limit=200)
+
+    header = "🗓 <b>Дайджест чатов по маркировке за 04.07.2026</b>"
+    marker = "<i>(продолжение)</i>"
+    joined = "".join(parts).replace(header, "", 1).replace(marker, "")
+    assert joined.replace("\n", "") == body_md.replace("\n", "")
+
+
 def test_oversized_line_never_cuts_an_html_entity():
     # One line (no newlines) far over the limit, full of '&' — each escapes to
     # '&amp;'. A naive hard-split of the HTML would sever an entity, which

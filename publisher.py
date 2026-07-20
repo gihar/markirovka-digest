@@ -24,6 +24,11 @@ logger = logging.getLogger(__name__)
 _TELEGRAM_LIMIT: int = 4096
 _HTTP_TIMEOUT: int = 30
 
+# Prefix marking every part after the first as a continuation of the digest,
+# so readers of a split digest know parts 2+ are not a fresh message. Rendered
+# to <i>(продолжение)</i> followed by a blank line.
+_CONTINUATION_MARKER: str = "*(продолжение)*\n\n"
+
 # Pace multi-part sends: Telegram's per-chat flood limit is ~1 message/second.
 _TELEGRAM_SEND_INTERVAL: float = 1.0
 # Bounded retries when Telegram asks us to wait (HTTP 429 + retry_after).
@@ -153,13 +158,31 @@ def render_parts(digest: DigestResult, limit: int = _TELEGRAM_LIMIT) -> list[str
     valid under parse_mode=HTML. (In the rare case an oversized single line is
     hard-split mid-``**bold**``, the orphaned markers render as literal
     asterisks — content is preserved either way.)
+
+    When the digest spans more than one message, every part after the first is
+    prefixed with a continuation marker. The marker's rendered length is
+    reserved during splitting (parts are sized to ``limit`` minus the marker),
+    so a part plus its marker never exceeds the limit. A digest that fits in a
+    single message gets no marker and is unchanged.
     """
     def html_len(chunk: str) -> int:
         return len(markdown_to_telegram_html(chunk))
 
     body = f"{_dated_header(digest.date)}\n\n{_strip_horizontal_rules(digest.markdown)}"
-    raw_parts = split_message(body, limit, measure=html_len)
-    return [markdown_to_telegram_html(part) for part in raw_parts]
+
+    # A digest that fits whole stays a single, marker-free message.
+    if html_len(body) <= limit:
+        return [markdown_to_telegram_html(body)]
+
+    # It splits: reserve room for the marker on every part but the first. The
+    # marker sits behind an inert blank line, so its rendered length adds to a
+    # chunk's rendered length exactly — reducing the limit by it is precise.
+    marker_len = html_len(_CONTINUATION_MARKER)
+    raw_parts = split_message(body, limit - marker_len, measure=html_len)
+    return [
+        markdown_to_telegram_html(part if i == 0 else _CONTINUATION_MARKER + part)
+        for i, part in enumerate(raw_parts)
+    ]
 
 
 def _parse_retry_after(resp: httpx.Response) -> float:
