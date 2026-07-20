@@ -71,6 +71,26 @@ def test_markdown_to_html_escapes_then_formats():
     assert "<i>курсив</i>" in out
 
 
+def test_markdown_escape_backslashes_are_stripped():
+    # LLMs habitually escape markdown punctuation (tasy\_emdina); Telegram HTML
+    # needs the plain character, not a literal backslash.
+    out = markdown_to_telegram_html("**tasy\\_emdina** и KALITIN\\_VLADIMIR")
+    assert "<b>tasy_emdina</b>" in out
+    assert "KALITIN_VLADIMIR" in out
+    assert "\\" not in out
+
+
+def test_escaped_punctuation_in_prose_renders_plain():
+    out = markdown_to_telegram_html("до 01\\.08\\.2026 \\(ЕАЭС\\) — срок")
+    assert "до 01.08.2026 (ЕАЭС) — срок" in out
+
+
+def test_escaped_asterisk_is_left_alone():
+    # '*' is real markup for this converter; its escape is not stripped.
+    out = markdown_to_telegram_html("знак \\* не курсив")
+    assert "\\*" in out
+
+
 def test_render_parts_prepends_dated_header():
     parts = render_parts(_digest("**Итоги** дня"))
     assert parts[0].startswith("🗓 <b>Дайджест чатов по маркировке за 04.07.2026</b>")

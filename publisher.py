@@ -62,6 +62,10 @@ def markdown_to_telegram_html(md: str) -> str:
     # Bold **text** before italic *text*.
     text = re.sub(r"\*\*(.+?)\*\*", r"<b>\1</b>", text)
     text = re.sub(r"\*(.+?)\*", r"<i>\1</i>", text)
+    # LLMs habitually backslash-escape markdown punctuation (tasy\_emdina).
+    # Telegram HTML renders the backslash literally, so strip escapes of
+    # characters this converter never treats as markup ('*' stays significant).
+    text = re.sub(r"\\([_\[\]()~`#+\-=|{}.!])", r"\1", text)
     return text
 
 
