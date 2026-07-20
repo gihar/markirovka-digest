@@ -20,8 +20,15 @@ from window import MSK
 logger = logging.getLogger(__name__)
 
 # Cap on the generated digest length (tokens). Not a tuning knob worth exposing.
-MAX_OUTPUT_TOKENS: int = 4096
+# Sized so the multi-part Telegram path has real headroom: hitting this cap now
+# fails the run (truncation guard) instead of publishing a cut-off digest.
+MAX_OUTPUT_TOKENS: int = 8192
 _HTTP_TIMEOUT: int = 60
+
+# finish_reason values that mean the provider stopped at the token cap, so the
+# content is cut off mid-thought. Providers vary: OpenAI uses "length", some
+# others report "max_tokens".
+_TRUNCATION_FINISH_REASONS: frozenset[str] = frozenset({"length", "max_tokens"})
 
 
 class LlmError(RuntimeError):
@@ -79,11 +86,23 @@ def _http_post(url: str, headers: dict, payload: dict) -> dict:
 
 
 def _extract_content(data: dict) -> str:
-    """Pull the assistant message text out of a chat-completions response."""
+    """Pull the assistant message text out of a chat-completions response.
+
+    Rejects responses the provider truncated at the token cap (finish_reason
+    "length"/"max_tokens") so a digest cut off mid-thought never gets published.
+    A missing or otherwise-valued finish_reason is accepted — many
+    OpenAI-compatible providers omit or vary the field.
+    """
     try:
-        content = data["choices"][0]["message"]["content"]
+        choice = data["choices"][0]
+        content = choice["message"]["content"]
     except (KeyError, IndexError, TypeError) as exc:
         raise LlmError(f"Unexpected LLM response shape: {data!r}") from exc
+    finish_reason = choice.get("finish_reason")
+    if finish_reason in _TRUNCATION_FINISH_REASONS:
+        raise LlmError(
+            f"LLM digest truncated by the token limit (finish_reason={finish_reason!r})"
+        )
     if not content or not content.strip():
         raise LlmError("LLM returned empty content")
     return content

@@ -22,6 +22,10 @@ def _ok_response(content="# Дайджест\nитоги дня"):
     return {"choices": [{"message": {"content": content}}]}
 
 
+def _response_with_finish(finish_reason, content="# Дайджест\nитоги дня"):
+    return {"choices": [{"message": {"content": content}, "finish_reason": finish_reason}]}
+
+
 def test_groups_by_chat_and_shows_moscow_time():
     messages = [
         TelegramMessage(-1, "Маркировка. Молоко", "ivan", "привет",
@@ -92,3 +96,35 @@ def test_transport_failure_propagates(tmp_path):
 
     with pytest.raises(LlmError):
         _generate(tmp_path, post=boom)
+
+
+def test_truncated_finish_reason_length_raises(tmp_path):
+    with pytest.raises(LlmError, match="length"):
+        _generate(
+            tmp_path,
+            post=lambda url, headers, payload: _response_with_finish("length"),
+        )
+
+
+def test_truncated_finish_reason_max_tokens_raises(tmp_path):
+    with pytest.raises(LlmError, match="max_tokens"):
+        _generate(
+            tmp_path,
+            post=lambda url, headers, payload: _response_with_finish("max_tokens"),
+        )
+
+
+def test_finish_reason_stop_returns_content(tmp_path):
+    result = _generate(
+        tmp_path,
+        post=lambda url, headers, payload: _response_with_finish("stop", "# Итоги"),
+    )
+    assert result.markdown == "# Итоги"
+
+
+def test_absent_finish_reason_returns_content(tmp_path):
+    result = _generate(
+        tmp_path,
+        post=lambda url, headers, payload: _ok_response("# Итоги"),
+    )
+    assert result.markdown == "# Итоги"
