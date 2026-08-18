@@ -5,6 +5,9 @@ from datetime import UTC, date, datetime
 from db import fetch_digest_messages
 
 DAY = date(2026, 7, 4)
+# The Digest Channel: Telegram auto-forwards its posts into the linked
+# Monitored Chat, and they must never become input to a Digest.
+DIGEST_CHANNEL = -1001383199989
 
 
 def _chat(conn, chat_id: int, title: str):
@@ -20,12 +23,23 @@ def _user(conn, user_id: int, first_name=None, username=None, is_bot=False):
     )
 
 
-def _msg(conn, chat_id, message_id, user_id, sent_at, text=None, caption=None):
+def _msg(
+    conn,
+    chat_id,
+    message_id,
+    user_id,
+    sent_at,
+    text=None,
+    caption=None,
+    forward_from_chat_id=None,
+):
     conn.execute(
         """INSERT INTO messages
-           (message_id, chat_id, user_id, text, caption, sent_at)
-           VALUES (%s, %s, %s, %s, %s, %s)""",
-        (message_id, chat_id, user_id, text, caption, sent_at),
+           (message_id, chat_id, user_id, text, caption, forward_from_chat_id,
+            sent_at)
+           VALUES (%s, %s, %s, %s, %s, %s, %s)""",
+        (message_id, chat_id, user_id, text, caption, forward_from_chat_id,
+         sent_at),
     )
 
 
@@ -57,7 +71,10 @@ def test_excludes_messages_from_spam_flagged_users(pg_conn):
     _msg(pg_conn, -1001, 2, 7, at, text="реклама заработка без вложений")
     _flag_spam(pg_conn, -1001, 7)
 
-    messages = fetch_digest_messages(pg_conn, [-1001], DAY, min_length=1)
+    messages = fetch_digest_messages(
+        pg_conn, [-1001], DAY, min_length=1,
+        digest_channel_id=DIGEST_CHANNEL,
+    )
 
     assert [m.text for m in messages] == ["содержательное сообщение по маркировке"]
 
@@ -72,7 +89,10 @@ def test_spam_flag_is_chat_scoped(pg_conn):
     _msg(pg_conn, -1002, 1, 7, at, text="в чате Б, где флага нет")
     _flag_spam(pg_conn, -1001, 7)  # spam only in chat -1001
 
-    messages = fetch_digest_messages(pg_conn, [-1001, -1002], DAY, min_length=1)
+    messages = fetch_digest_messages(
+        pg_conn, [-1001, -1002], DAY, min_length=1,
+        digest_channel_id=DIGEST_CHANNEL,
+    )
 
     assert [m.text for m in messages] == ["в чате Б, где флага нет"]
 
@@ -84,7 +104,10 @@ def test_works_when_spam_users_table_is_absent(pg_conn):
     _msg(pg_conn, -1001, 1, 5, datetime(2026, 7, 4, 10, 0, tzinfo=UTC),
          text="сообщение по маркировке")
 
-    messages = fetch_digest_messages(pg_conn, [-1001], DAY, min_length=1)
+    messages = fetch_digest_messages(
+        pg_conn, [-1001], DAY, min_length=1,
+        digest_channel_id=DIGEST_CHANNEL,
+    )
 
     assert [m.text for m in messages] == ["сообщение по маркировке"]
 
@@ -97,9 +120,74 @@ def test_excludes_messages_from_bot_accounts(pg_conn):
     _msg(pg_conn, -1001, 1, 9, at, text="реклама от бота, купи всё прямо сейчас")
     _msg(pg_conn, -1001, 2, 5, at, text="содержательное сообщение по маркировке")
 
-    messages = fetch_digest_messages(pg_conn, [-1001], DAY, min_length=1)
+    messages = fetch_digest_messages(
+        pg_conn, [-1001], DAY, min_length=1,
+        digest_channel_id=DIGEST_CHANNEL,
+    )
 
     assert [m.text for m in messages] == ["содержательное сообщение по маркировке"]
+
+
+def test_excludes_posts_forwarded_from_the_digest_channel(pg_conn):
+    # Telegram auto-forwards Digest Channel posts into the linked Monitored
+    # Chat from its service account, which is not flagged is_bot — so the bot
+    # filter lets it through and only the forward origin identifies it.
+    _chat(pg_conn, -1001, "Маркировка")
+    _user(pg_conn, 777000, first_name="Telegram", is_bot=False)
+    _user(pg_conn, 5, username="ivan")
+    at = datetime(2026, 7, 4, 10, 0, tzinfo=UTC)
+    _msg(pg_conn, -1001, 1, 777000, at,
+         text="Дайджест за 3 июля: темы дня и статусы",
+         forward_from_chat_id=DIGEST_CHANNEL)
+    _msg(pg_conn, -1001, 2, 5, at, text="живое обсуждение кодов маркировки")
+
+    messages = fetch_digest_messages(
+        pg_conn, [-1001], DAY, min_length=1, digest_channel_id=DIGEST_CHANNEL
+    )
+
+    assert [m.text for m in messages] == ["живое обсуждение кодов маркировки"]
+
+
+def test_keeps_messages_that_were_never_forwarded(pg_conn):
+    # Ordinary chat messages carry NULL in forward_from_chat_id. A plain
+    # `!=` predicate evaluates to NULL for them and would drop nearly the whole
+    # Digest input, so this is the case that must never regress.
+    _chat(pg_conn, -1001, "Маркировка")
+    _user(pg_conn, 5, username="ivan")
+    at = datetime(2026, 7, 4, 10, 0, tzinfo=UTC)
+    _msg(pg_conn, -1001, 1, 5, at, text="первое живое сообщение")
+    _msg(pg_conn, -1001, 2, 5, at, text="второе живое сообщение")
+
+    messages = fetch_digest_messages(
+        pg_conn, [-1001], DAY, min_length=1,
+        digest_channel_id=DIGEST_CHANNEL,
+    )
+
+    assert [m.text for m in messages] == [
+        "первое живое сообщение",
+        "второе живое сообщение",
+    ]
+
+
+def test_keeps_forwards_from_other_channels(pg_conn):
+    # Only the Digest Channel is broadcast-of-our-own-making; a member
+    # forwarding a Chestny ZNAK announcement is ordinary conversation.
+    _chat(pg_conn, -1001, "Маркировка")
+    _user(pg_conn, 5, username="ivan")
+    at = datetime(2026, 7, 4, 10, 0, tzinfo=UTC)
+    _msg(pg_conn, -1001, 1, 5, at,
+         text="пересланное объявление Честного Знака",
+         forward_from_chat_id=-1005555555555)
+    _msg(pg_conn, -1001, 2, 5, at,
+         text="дайджест, пересланный автоматикой",
+         forward_from_chat_id=DIGEST_CHANNEL)
+
+    messages = fetch_digest_messages(
+        pg_conn, [-1001], DAY, min_length=1,
+        digest_channel_id=DIGEST_CHANNEL,
+    )
+
+    assert [m.text for m in messages] == ["пересланное объявление Честного Знака"]
 
 
 def test_returns_a_message_sent_on_the_target_msk_day(pg_conn):
@@ -111,7 +199,10 @@ def test_returns_a_message_sent_on_the_target_msk_day(pg_conn):
         text="Вопрос про коды маркировки на молоко",
     )
 
-    messages = fetch_digest_messages(pg_conn, [-1001], DAY, min_length=1)
+    messages = fetch_digest_messages(
+        pg_conn, [-1001], DAY, min_length=1,
+        digest_channel_id=DIGEST_CHANNEL,
+    )
 
     assert len(messages) == 1
     m = messages[0]
@@ -129,7 +220,10 @@ def test_excludes_chats_outside_the_allow_list(pg_conn):
     _msg(pg_conn, -1001, 1, 5, at, text="про маркировку молока")
     _msg(pg_conn, -2002, 1, 5, at, text="про совсем другое")
 
-    messages = fetch_digest_messages(pg_conn, [-1001], DAY, min_length=1)
+    messages = fetch_digest_messages(
+        pg_conn, [-1001], DAY, min_length=1,
+        digest_channel_id=DIGEST_CHANNEL,
+    )
 
     assert [m.chat_id for m in messages] == [-1001]
 
@@ -147,7 +241,10 @@ def test_respects_moscow_calendar_day_boundaries(pg_conn):
     _msg(pg_conn, -1001, 4, 5, datetime(2026, 7, 4, 21, 0, tzinfo=UTC),
          text="00:00 MSK Jul 5 — OUT")
 
-    messages = fetch_digest_messages(pg_conn, [-1001], DAY, min_length=1)
+    messages = fetch_digest_messages(
+        pg_conn, [-1001], DAY, min_length=1,
+        digest_channel_id=DIGEST_CHANNEL,
+    )
 
     assert sorted(m.text for m in messages) == [
         "00:30 MSK Jul 4 — IN",
@@ -162,7 +259,10 @@ def test_skips_messages_shorter_than_min_length(pg_conn):
     _msg(pg_conn, -1001, 1, 5, at, text="ок")  # 2 chars — noise
     _msg(pg_conn, -1001, 2, 5, at, text="это содержательное сообщение")
 
-    messages = fetch_digest_messages(pg_conn, [-1001], DAY, min_length=10)
+    messages = fetch_digest_messages(
+        pg_conn, [-1001], DAY, min_length=10,
+        digest_channel_id=DIGEST_CHANNEL,
+    )
 
     assert [m.text for m in messages] == ["это содержательное сообщение"]
 
@@ -173,7 +273,10 @@ def test_uses_caption_when_text_is_null(pg_conn):
     _msg(pg_conn, -1001, 1, 5, datetime(2026, 7, 4, 10, 0, tzinfo=UTC),
          text=None, caption="подпись к фото про этикетку")
 
-    messages = fetch_digest_messages(pg_conn, [-1001], DAY, min_length=1)
+    messages = fetch_digest_messages(
+        pg_conn, [-1001], DAY, min_length=1,
+        digest_channel_id=DIGEST_CHANNEL,
+    )
 
     assert [m.text for m in messages] == ["подпись к фото про этикетку"]
 
@@ -185,7 +288,10 @@ def test_author_falls_back_first_name_then_unknown(pg_conn):
     _msg(pg_conn, -1001, 1, 5, at, text="сообщение без username")
     _msg(pg_conn, -1001, 2, None, at, text="сообщение без автора")  # user_id NULL
 
-    messages = fetch_digest_messages(pg_conn, [-1001], DAY, min_length=1)
+    messages = fetch_digest_messages(
+        pg_conn, [-1001], DAY, min_length=1,
+        digest_channel_id=DIGEST_CHANNEL,
+    )
     by_text = {m.text: m.sender_name for m in messages}
 
     assert by_text["сообщение без username"] == "Пётр"
@@ -200,7 +306,10 @@ def test_orders_by_chat_title_then_time(pg_conn):
     _msg(pg_conn, -1001, 2, 5, datetime(2026, 7, 4, 8, 0, tzinfo=UTC), text="молоко первое")
     _msg(pg_conn, -1002, 1, 5, datetime(2026, 7, 4, 9, 0, tzinfo=UTC), text="главный чат")
 
-    messages = fetch_digest_messages(pg_conn, [-1001, -1002], DAY, min_length=1)
+    messages = fetch_digest_messages(
+        pg_conn, [-1001, -1002], DAY, min_length=1,
+        digest_channel_id=DIGEST_CHANNEL,
+    )
 
     # "Главный чат" sorts before "Молоко"; within a chat, by time ascending.
     assert [m.text for m in messages] == ["главный чат", "молоко первое", "молоко второе"]

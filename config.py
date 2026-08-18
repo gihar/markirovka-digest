@@ -41,6 +41,7 @@ class Config:
     channels: tuple[ChannelConfig, ...]
     prompt_path: Path
     min_message_length: int
+    digest_channel_id: int
 
 
 def _load_channels(path: Path) -> tuple[tuple[ChannelConfig, ...], dict]:
@@ -70,6 +71,27 @@ def _load_channels(path: Path) -> tuple[tuple[ChannelConfig, ...], dict]:
         channels.append(ChannelConfig(chat_id=int(chat_id)))
 
     return tuple(channels), settings
+
+
+def _digest_channel_id(settings: dict, path: Path) -> int:
+    """Return the Digest Channel id from [settings] or raise with a clear message.
+
+    Content originating in the Digest Channel is never input to a Digest, so the
+    read path cannot run without this id.
+    """
+    raw = settings.get("digest_channel_id")
+    if raw is None:
+        raise ValueError(
+            f"Missing 'digest_channel_id' under [settings] in {path}"
+        )
+    # bool is a subclass of int, and a quoted number is not an id either: the
+    # value is matched against a BIGINT column, so require a real TOML integer.
+    if not isinstance(raw, int) or isinstance(raw, bool):
+        raise ValueError(
+            f"'digest_channel_id' in {path} must be an integer chat id, "
+            f"got {raw!r}"
+        )
+    return raw
 
 
 def _require_env(name: str) -> str:
@@ -107,4 +129,5 @@ def load_config() -> Config:
         channels=channels,
         prompt_path=PROMPT_PATH,
         min_message_length=settings.get("min_message_length", 30),
+        digest_channel_id=_digest_channel_id(settings, CHANNELS_PATH),
     )

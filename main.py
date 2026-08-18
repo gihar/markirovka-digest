@@ -53,7 +53,11 @@ def run() -> None:
             day=day,
             prompt_path=config.prompt_path,
             fetch_messages=lambda: fetch_digest_messages(
-                conn, chat_ids, day, config.min_message_length
+                conn,
+                chat_ids,
+                day,
+                config.min_message_length,
+                config.digest_channel_id,
             ),
             generate=lambda msgs, prompt_path, date_str: generate_digest(
                 msgs,

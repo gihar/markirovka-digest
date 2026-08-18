@@ -3,7 +3,12 @@
 import pytest
 
 import config as config_module
-from config import _load_channels, load_config
+from config import (
+    CHANNELS_PATH,
+    _digest_channel_id,
+    _load_channels,
+    load_config,
+)
 from models import LlmProvider
 
 
@@ -48,7 +53,11 @@ _ALL_ENV = {
 
 
 def _point_config_at(tmp_path, monkeypatch):
-    path = _write_channels(tmp_path, "[[channels]]\nchat_id = -1001\n")
+    path = _write_channels(
+        tmp_path,
+        "[settings]\ndigest_channel_id = -1001383199989\n\n"
+        "[[channels]]\nchat_id = -1001\n",
+    )
     monkeypatch.setattr(config_module, "CHANNELS_PATH", path)
 
 
@@ -85,3 +94,61 @@ def test_load_config_reads_the_llm_provider_and_allow_list(tmp_path, monkeypatch
     assert cfg.min_message_length == 30  # default when settings omit it
     assert not hasattr(cfg, "anthropic_api_key")
     assert not hasattr(cfg, "telegram_session")
+
+
+def test_load_config_reads_the_digest_channel_id(tmp_path, monkeypatch):
+    # The Digest Channel id is numeric config, deliberately separate from
+    # TELEGRAM_DIGEST_CHAT_ID: that one is an addressing string and may be an
+    # @username, which cannot be matched against the id the Scraper stores.
+    path = _write_channels(
+        tmp_path,
+        "[settings]\ndigest_channel_id = -1001383199989\n\n"
+        "[[channels]]\nchat_id = -1001\n",
+    )
+    monkeypatch.setattr(config_module, "CHANNELS_PATH", path)
+    for k, v in _ALL_ENV.items():
+        monkeypatch.setenv(k, v)
+
+    cfg = load_config()
+
+    assert cfg.digest_channel_id == -1001383199989
+
+
+def test_missing_digest_channel_id_is_rejected(tmp_path, monkeypatch):
+    path = _write_channels(tmp_path, "[[channels]]\nchat_id = -1001\n")
+    monkeypatch.setattr(config_module, "CHANNELS_PATH", path)
+    for k, v in _ALL_ENV.items():
+        monkeypatch.setenv(k, v)
+
+    with pytest.raises(ValueError, match="digest_channel_id"):
+        load_config()
+
+
+@pytest.mark.parametrize(
+    "raw",
+    ['"-1001383199989"', '"канал дайджеста"', "true", "-1001383199989.5"],
+    ids=["quoted-number", "text", "boolean", "float"],
+)
+def test_non_integer_digest_channel_id_is_rejected(tmp_path, monkeypatch, raw):
+    # The id is matched against a BIGINT column in the Message Store, so only a
+    # TOML integer will do — a quoted number is config drift waiting to happen.
+    path = _write_channels(
+        tmp_path,
+        f"[settings]\ndigest_channel_id = {raw}\n\n"
+        "[[channels]]\nchat_id = -1001\n",
+    )
+    monkeypatch.setattr(config_module, "CHANNELS_PATH", path)
+    for k, v in _ALL_ENV.items():
+        monkeypatch.setenv(k, v)
+
+    with pytest.raises(ValueError, match="digest_channel_id"):
+        load_config()
+
+
+def test_shipped_channels_toml_declares_the_digest_channel():
+    # Guards the deployed file itself: without the id in [settings] every run
+    # would fail at config load, and the exclusion it drives would be silently
+    # absent from the query.
+    _, settings = _load_channels(CHANNELS_PATH)
+
+    assert isinstance(_digest_channel_id(settings, CHANNELS_PATH), int)

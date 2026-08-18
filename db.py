@@ -22,6 +22,11 @@ from models import TelegramMessage
 # ::date on that is the Moscow calendar day (independent of session timezone).
 # Bot-authored messages are excluded (u.is_bot IS NOT TRUE also keeps rows with
 # no user, where the LEFT JOIN yields NULL).
+# Posts originating in the Digest Channel are excluded: Telegram auto-forwards
+# them into the linked Monitored Chat from a service account that is not flagged
+# is_bot, so the forward origin is what identifies them. IS DISTINCT FROM (not
+# !=) is required — messages nobody forwarded carry NULL there, and NULL != x is
+# NULL, which would drop nearly every real message.
 # {spam_filter} is filled with the spam-user exclusion iff the Scraper's
 # spam_users table is present (see _spam_exclusion); the clause is a fixed
 # literal with no interpolated data.
@@ -40,6 +45,7 @@ WHERE m.chat_id = ANY(%(chat_ids)s)
   AND COALESCE(m.text, m.caption) IS NOT NULL
   AND char_length(COALESCE(m.text, m.caption)) >= %(min_length)s
   AND u.is_bot IS NOT TRUE
+  AND m.forward_from_chat_id IS DISTINCT FROM %(digest_channel_id)s
   {spam_filter}
 ORDER BY c.title, m.sent_at
 """
@@ -87,18 +93,26 @@ def fetch_digest_messages(
     chat_ids: Sequence[int],
     day: date,
     min_length: int,
+    digest_channel_id: int,
 ) -> list[TelegramMessage]:
     """Return messages for ``day`` (Europe/Moscow) across the allow-listed chats.
 
     Filters out empty/too-short content, bot authors, spam-flagged users (when
-    the Scraper's spam_users table is available), and non-allow-listed chats.
-    Ordered by chat title, then time.
+    the Scraper's spam_users table is available), non-allow-listed chats, and
+    posts forwarded from the Digest Channel (``digest_channel_id``) — otherwise
+    the Digest would summarise its own previous output. Ordered by chat title,
+    then time.
     """
     query = _QUERY_TEMPLATE.format(spam_filter=_spam_exclusion(conn))
     with conn.cursor() as cur:
         cur.execute(
             query,
-            {"chat_ids": list(chat_ids), "day": day, "min_length": min_length},
+            {
+                "chat_ids": list(chat_ids),
+                "day": day,
+                "min_length": min_length,
+                "digest_channel_id": digest_channel_id,
+            },
         )
         rows = cur.fetchall()
     return [_row_to_message(row) for row in rows]

@@ -10,6 +10,13 @@
 [settings]
 min_message_length = 30    # skip messages shorter than this (noise: "+1", "ок")
 
+# The Digest Channel we publish to. Telegram auto-forwards its posts into the
+# linked Monitored Chat, so they must be excluded from the Digest input — see
+# the invariant under "Digest Channel" in CONTEXT.md. Kept separate from
+# TELEGRAM_DIGEST_CHAT_ID, which is an addressing string and may be an
+# @username; only the numeric id can be matched against the Message Store.
+digest_channel_id = -1001383199989   # Маркировка. Дайджест
+
 [[channels]]
 chat_id = -1001205001393   # Маркировка. Главный чат
 
