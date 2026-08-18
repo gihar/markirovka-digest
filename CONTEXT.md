@@ -19,8 +19,8 @@ never alters its schema.
 ### Digest Service
 This application. A **read-only consumer** of the Message Store. Its
 responsibility: read messages for a time window, generate a summary
-(the **Digest**) via Claude, and publish it. It does not ingest from Telegram
-and holds no user Telegram session.
+(the **Digest**) via an LLM, and publish it to the **Digest Channel**. It does
+not ingest from Telegram and holds no user Telegram session.
 
 ### Digest
 The generated summary (Markdown) of chat activity over a time window, produced
@@ -43,3 +43,15 @@ exactly one calendar day.
 ### Monitored Chat
 A Telegram chat whose messages are eligible to appear in a Digest. Identified by
 a chat id.
+
+### Digest Channel
+The Telegram channel the Digest Service publishes each Digest to. It is not a
+Monitored Chat, but its posts reach one: the channel is linked to a Monitored
+Chat for discussion, so everything published lands there as an ordinary
+message.
+
+Hence the invariant: **content originating in the Digest Channel is never input
+to a Digest.** Without it the Digest summarises yesterday's Digest, and its
+topics reproduce themselves indefinitely. The exclusion covers the whole
+channel, not just Digests — everything it carries is broadcast, not
+conversation, and a Digest summarises conversation.
