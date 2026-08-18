@@ -11,10 +11,13 @@ from models import DigestResult, LlmProvider
 from publisher import (
     _TELEGRAM_LIMIT,
     _TELEGRAM_SEND_INTERVAL,
+    alert_degraded,
     alert_failure,
     TelegramDeliveryError,
     TelegramFloodError,
     markdown_to_telegram_html,
+    render_alert,
+    render_degraded_alert,
     render_parts,
     send_parts,
     split_message,
@@ -31,6 +34,7 @@ def _digest(markdown: str) -> DigestResult:
         chat_count=1,
         token_count=1,
         model="anthropic/claude-sonnet-4.6",
+        provider_failures=(),
     )
 
 
@@ -290,11 +294,13 @@ def test_send_parts_gives_up_after_persistent_flood():
         )
 
 
-def _config(alert_chat_id: str | None) -> Config:
+def _config(alert_chat_id: str | None, primary_model: str = "m") -> Config:
     """A Config that differs from the real one only in the alert chat."""
     return Config(
         database_url="postgresql://u:p@host:5432/db",
-        llm_providers=(LlmProvider(base_url="u", api_key="k", model="m"),),
+        llm_providers=(
+            LlmProvider(base_url="u", api_key="k", model=primary_model),
+        ),
         telegram_bot_token="123:abc",
         telegram_digest_chat_id="-1001383199989",
         telegram_alert_chat_id=alert_chat_id,
@@ -303,6 +309,125 @@ def _config(alert_chat_id: str | None) -> Config:
         min_message_length=30,
         digest_channel_id=-1001383199989,
     )
+
+
+_PRIMARY_MODEL = "anthropic/claude-sonnet-4.6"
+
+
+_PRIMARY_FAILED = (f"[{_PRIMARY_MODEL}] LLM request failed: 403 Key limit exceeded",)
+
+
+def _digest_served_by(
+    model: str | None, failures: tuple[str, ...] = ()
+) -> DigestResult:
+    """A digest produced by ``model``, having skipped the providers in ``failures``."""
+    return DigestResult(
+        date="2026-08-09",
+        markdown="итоги",
+        message_count=1,
+        chat_count=1,
+        token_count=1,
+        model=model,
+        provider_failures=failures,
+    )
+
+
+def test_a_fallback_served_digest_alerts_with_the_model_and_the_reason():
+    calls = []
+
+    alert_degraded(
+        date(2026, 8, 9),
+        _digest_served_by("qwen3.6-unlim-noreason", _PRIMARY_FAILED),
+        _config("-1005555", primary_model=_PRIMARY_MODEL),
+        post=lambda url, payload: calls.append(payload),
+        sleep=_NO_SLEEP,
+    )
+
+    assert len(calls) == 1  # exactly one message
+    assert calls[0]["chat_id"] == "-1005555"
+    text = calls[0]["text"]
+    assert "09.08.2026" in text
+    assert "qwen3.6-unlim-noreason" in text  # what produced the digest
+    assert "Key limit exceeded" in text  # why the primary was skipped
+
+
+def test_a_primary_served_digest_alerts_nobody():
+    """A normal day must stay silent, or the alert becomes noise to be ignored."""
+    calls = []
+
+    alert_degraded(
+        date(2026, 8, 9),
+        _digest_served_by(_PRIMARY_MODEL),
+        _config("-1005555", primary_model=_PRIMARY_MODEL),
+        post=lambda url, payload: calls.append(payload),
+        sleep=_NO_SLEEP,
+    )
+
+    assert calls == []
+
+
+def test_a_day_with_nothing_to_digest_is_not_a_degraded_run():
+    """model is None means no LLM ran at all — that is quiet, not degraded."""
+    calls = []
+
+    alert_degraded(
+        date(2026, 8, 9),
+        _digest_served_by(None),
+        _config("-1005555", primary_model=_PRIMARY_MODEL),
+        post=lambda url, payload: calls.append(payload),
+        sleep=_NO_SLEEP,
+    )
+
+    assert calls == []
+
+
+def test_no_degraded_alert_is_attempted_when_the_alert_chat_is_unset(caplog):
+    """The fallback must keep working unalerted — the digest is already out."""
+    calls = []
+
+    alert_degraded(
+        date(2026, 8, 9),
+        _digest_served_by("qwen3.6-unlim-noreason", _PRIMARY_FAILED),
+        _config(None, primary_model=_PRIMARY_MODEL),
+        post=lambda url, payload: calls.append(payload),
+        sleep=_NO_SLEEP,
+    )
+
+    assert calls == []  # nowhere to send
+    assert "TELEGRAM_ALERT_CHAT_ID" in caplog.text
+    assert "qwen3.6-unlim-noreason" in caplog.text  # degradation still recorded
+
+
+def test_the_degraded_alert_reads_unlike_the_failure_alert():
+    """"No digest" and "digest on the backup" call for different reactions."""
+    day = date(2026, 8, 9)
+
+    degraded = render_degraded_alert(
+        day, _digest_served_by("qwen3.6-unlim-noreason", _PRIMARY_FAILED)
+    )
+    failed = render_alert(day, RuntimeError("Every LLM provider failed"))
+
+    assert "опубликован на запасном" in degraded
+    assert "не опубликован" not in degraded
+    assert "не опубликован" in failed
+    assert degraded.splitlines()[0] != failed.splitlines()[0]
+
+
+def test_a_failed_degraded_alert_send_never_escapes(caplog):
+    """The digest is already published — a sulking Telegram must not fail the run."""
+
+    def broken(url, payload):
+        raise RuntimeError("Telegram недоступен")
+
+    alert_degraded(
+        date(2026, 8, 9),
+        _digest_served_by("qwen3.6-unlim-noreason", _PRIMARY_FAILED),
+        _config("-1005555", primary_model=_PRIMARY_MODEL),
+        post=broken,
+        sleep=_NO_SLEEP,
+    )
+
+    assert "Telegram недоступен" in caplog.text
 
 
 def test_alert_names_the_covered_day_and_the_error():

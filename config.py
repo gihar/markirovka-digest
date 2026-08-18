@@ -61,6 +61,11 @@ class Config:
     min_message_length: int
     digest_channel_id: int
 
+    @property
+    def primary_model(self) -> str:
+        """Model of the primary provider — what a normal day's Digest comes from."""
+        return self.llm_providers[0].model
+
 
 def _load_channels(path: Path) -> tuple[tuple[ChannelConfig, ...], dict]:
     """Parse channels.toml and return (allow-list, settings).

@@ -93,6 +93,7 @@ def test_first_provider_produces_the_digest_and_the_next_is_untouched(tmp_path):
 
     assert result.markdown == "# Дайджест"
     assert result.model == "primary"
+    assert result.provider_failures == ()
     assert tried == ["primary"]
 
 
@@ -118,6 +119,26 @@ def test_a_failed_provider_is_logged_and_the_next_one_is_tried(tmp_path, caplog)
     assert tried == ["primary", "fallback"]
     assert "primary" in caplog.text
     assert "Key limit exceeded" in caplog.text
+
+
+def test_the_fallback_digest_records_why_the_primary_was_skipped(tmp_path):
+    """Only this loop sees the reason, and the degraded-run alert has to name it."""
+
+    def fake_post(url, headers, payload):
+        if payload["model"] == "primary":
+            raise LlmError("LLM request failed: 403 Key limit exceeded")
+        return _ok_response("# Запасной дайджест")
+
+    result = generate_digest(
+        [_msg()], _prompt(tmp_path), "2026-07-04",
+        providers=(_provider(model="primary"), _provider(model="fallback")),
+        post=fake_post,
+    )
+
+    assert result.model == "fallback"
+    assert result.provider_failures == (
+        "[primary] LLM request failed: 403 Key limit exceeded",
+    )
 
 
 def test_when_every_provider_fails_the_error_names_them_all(tmp_path):

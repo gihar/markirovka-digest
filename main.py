@@ -13,7 +13,7 @@ from analyzer import generate_digest
 from config import Config, load_config
 from db import connect, fetch_digest_messages
 from models import DigestResult, TelegramMessage
-from publisher import alert_failure, publish
+from publisher import alert_degraded, alert_failure, publish
 from window import previous_msk_day
 
 logger = logging.getLogger(__name__)
@@ -25,11 +25,16 @@ def run_pipeline(
     fetch_messages: Callable[[], list[TelegramMessage]],
     generate: Callable[[list[TelegramMessage], Path, str], DigestResult],
     publish_digest: Callable[[DigestResult], int],
+    report_digest: Callable[[DigestResult], None],
 ) -> int | None:
     """Run the digest pipeline for ``day``.
 
     Returns the number of Telegram parts sent, or None if there were no messages
     to digest (nothing is published on a quiet day).
+
+    ``report_digest`` sees the digest once it is published — it flags a run that
+    a fallback provider served (ADR-0002), so it runs after publishing and never
+    stands between the digest and its readers.
     """
     messages = fetch_messages()
     if not messages:
@@ -37,7 +42,9 @@ def run_pipeline(
         return None
 
     digest = generate(messages, prompt_path, day.isoformat())
-    return publish_digest(digest)
+    parts = publish_digest(digest)
+    report_digest(digest)
+    return parts
 
 
 def run_and_alert_on_failure(
@@ -79,6 +86,7 @@ def _digest_once(day: date, config: Config) -> int | None:
                 providers=config.llm_providers,
             ),
             publish_digest=lambda digest: publish(digest, config),
+            report_digest=lambda digest: alert_degraded(day, digest, config),
         )
     finally:
         conn.close()

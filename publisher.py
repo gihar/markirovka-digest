@@ -351,3 +351,72 @@ def alert_failure(
         logger.error(
             "Could not deliver the failure alert for %s: %s", day, alert_error
         )
+
+
+def render_degraded_alert(day: date, digest: DigestResult) -> str:
+    """Render a fallback-served run as one short Telegram message.
+
+    Deliberately unlike the failure alert: that one means no digest came out at
+    all, this one means the digest is published but thinner than usual, and the
+    two call for different reactions.
+    """
+    header = (
+        f"🟡 <b>Дайджест за {day.strftime('%d.%m.%Y')} "
+        f"опубликован на запасном провайдере</b>\n\n"
+    )
+    body = f"Модель: {digest.model}\n"
+    if digest.provider_failures:
+        body += "Основной провайдер не ответил:\n" + "\n".join(
+            digest.provider_failures
+        )
+    # Same escaping and clipping as the failure alert: the reasons carry the
+    # provider's own response body, which can be an HTML page from a proxy.
+    escaped = html.escape(body, quote=False)
+    return header + _clip_html(escaped, _TELEGRAM_LIMIT - len(header))
+
+
+def alert_degraded(
+    day: date,
+    digest: DigestResult,
+    config: Config,
+    *,
+    post=_http_post,
+    sleep: Callable[[float], None] = time.sleep,
+) -> None:
+    """Tell the alert chat that a non-primary provider produced the digest.
+
+    No-op when the primary produced the digest, which is every normal day, and
+    when no LLM ran at all (model is None) — a day with nothing to digest is
+    quiet, not degraded.
+
+    Never raises: the digest is already published and the run is a success, so
+    an undeliverable alert must not turn it into a failure.
+    """
+    if digest.model is None or digest.model == config.primary_model:
+        return
+
+    if not config.telegram_alert_chat_id:
+        logger.warning(
+            "Digest for %s came from the fallback model %s and "
+            "TELEGRAM_ALERT_CHAT_ID is not set — no alert sent. Skipped: %s",
+            day,
+            digest.model,
+            "; ".join(digest.provider_failures) or "unknown",
+        )
+        return
+
+    try:
+        send_parts(
+            [render_degraded_alert(day, digest)],
+            config.telegram_bot_token,
+            config.telegram_alert_chat_id,
+            post=post,
+            sleep=sleep,
+        )
+    except Exception as alert_error:
+        # Deliberately broad, and for the opposite reason to alert_failure: the
+        # digest for this day is already out, so a run that succeeded must not
+        # start failing because Telegram would not take the footnote about it.
+        logger.error(
+            "Could not deliver the degraded-run alert for %s: %s", day, alert_error
+        )

@@ -30,11 +30,12 @@ def _digest():
         chat_count=1,
         token_count=1,
         model="anthropic/claude-sonnet-4.6",
+        provider_failures=(),
     )
 
 
 def test_empty_day_does_not_publish():
-    calls = {"generated": 0, "published": 0}
+    calls = {"generated": 0, "published": 0, "reported": 0}
 
     def generate(messages, prompt_path, date_str):
         calls["generated"] += 1
@@ -50,10 +51,13 @@ def test_empty_day_does_not_publish():
         fetch_messages=lambda: [],
         generate=generate,
         publish_digest=publish_digest,
+        report_digest=lambda digest: calls.__setitem__(
+            "reported", calls["reported"] + 1
+        ),
     )
 
     assert result is None
-    assert calls == {"generated": 0, "published": 0}
+    assert calls == {"generated": 0, "published": 0, "reported": 0}
 
 
 def test_non_empty_day_generates_and_publishes():
@@ -68,17 +72,23 @@ def test_non_empty_day_generates_and_publishes():
         seen["digest"] = digest
         return 2  # two Telegram parts
 
+    reported: list[DigestResult] = []
+
     result = run_pipeline(
         day=DAY,
         prompt_path=Path("prompts/digest.md"),
         fetch_messages=lambda: [_msg()],
         generate=generate,
         publish_digest=publish_digest,
+        report_digest=reported.append,
     )
 
     assert result == 2
     assert seen["date_str"] == "2026-07-04"  # the covered MSK day
     assert seen["digest"].markdown == "итоги"
+    # Reported only after publishing: the alert is a footnote to a digest that
+    # is already out, never a precondition for sending it.
+    assert reported == [seen["digest"]]
 
 
 def test_a_failed_run_alerts_once_and_still_fails():

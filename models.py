@@ -58,3 +58,7 @@ class DigestResult:
     # day, the fallback's when the primary was down (ADR-0002). None when no
     # LLM ran at all, i.e. there was nothing to digest.
     model: str | None
+    # "[model] reason" for every provider that failed before the one that
+    # answered; empty on a normal day. A fallback that nobody notices is worse
+    # than no fallback, so the degraded-run alert names the reason from here.
+    provider_failures: tuple[str, ...]
