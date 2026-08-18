@@ -13,7 +13,7 @@ from analyzer import generate_digest
 from config import Config, load_config
 from db import connect, fetch_digest_messages
 from models import DigestResult, TelegramMessage
-from publisher import publish
+from publisher import alert_failure, publish
 from window import previous_msk_day
 
 logger = logging.getLogger(__name__)
@@ -40,16 +40,29 @@ def run_pipeline(
     return publish_digest(digest)
 
 
-def run() -> None:
-    """Wire real collaborators and run the pipeline once."""
-    logging.basicConfig(level=logging.INFO)
-    config: Config = load_config()
-    day = previous_msk_day(datetime.now(tz=UTC))
-    chat_ids = [c.chat_id for c in config.channels]
+def run_and_alert_on_failure(
+    work: Callable[[], int | None],
+    alert: Callable[[BaseException], None],
+) -> int | None:
+    """Run ``work``, and if it fails, alert before letting the failure out.
 
+    The failure keeps propagating: a run that could not publish must exit
+    non-zero, or the cron platform records a success and the silence goes
+    unnoticed — which is exactly how five days passed with nothing published.
+    """
+    try:
+        return work()
+    except Exception as error:
+        alert(error)
+        raise
+
+
+def _digest_once(day: date, config: Config) -> int | None:
+    """Open the Message Store, run the pipeline for ``day``, close it again."""
+    chat_ids = [c.chat_id for c in config.channels]
     conn = connect(config.database_url)
     try:
-        parts = run_pipeline(
+        return run_pipeline(
             day=day,
             prompt_path=config.prompt_path,
             fetch_messages=lambda: fetch_digest_messages(
@@ -69,6 +82,21 @@ def run() -> None:
         )
     finally:
         conn.close()
+
+
+def run() -> None:
+    """Wire real collaborators and run the pipeline once."""
+    logging.basicConfig(level=logging.INFO)
+    # Config load sits outside the alert guard by necessity: the alert is sent
+    # with the bot token and chat id that load_config produces, so a failure
+    # here has nothing to send with. Everything after it is covered.
+    config: Config = load_config()
+    day = previous_msk_day(datetime.now(tz=UTC))
+
+    parts = run_and_alert_on_failure(
+        lambda: _digest_once(day, config),
+        lambda error: alert_failure(day, error, config),
+    )
 
     if parts is not None:
         logger.info("Digest for %s published in %d Telegram message(s)", day, parts)

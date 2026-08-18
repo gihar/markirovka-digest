@@ -1,10 +1,17 @@
 """Behavior: publish the Digest to Telegram, splitting long text losslessly."""
 
+import re
+from datetime import date
+from pathlib import Path
+
 import pytest
 
-from models import DigestResult
+from config import Config
+from models import DigestResult, LlmProvider
 from publisher import (
+    _TELEGRAM_LIMIT,
     _TELEGRAM_SEND_INTERVAL,
+    alert_failure,
     TelegramDeliveryError,
     TelegramFloodError,
     markdown_to_telegram_html,
@@ -281,3 +288,128 @@ def test_send_parts_gives_up_after_persistent_flood():
             ["a"], token="t", chat_id="-1",
             post=always_flood, sleep=_NO_SLEEP, max_flood_retries=2,
         )
+
+
+def _config(alert_chat_id: str | None) -> Config:
+    """A Config that differs from the real one only in the alert chat."""
+    return Config(
+        database_url="postgresql://u:p@host:5432/db",
+        llm_providers=(LlmProvider(base_url="u", api_key="k", model="m"),),
+        telegram_bot_token="123:abc",
+        telegram_digest_chat_id="-1001383199989",
+        telegram_alert_chat_id=alert_chat_id,
+        channels=(),
+        prompt_path=Path("prompts/digest.md"),
+        min_message_length=30,
+        digest_channel_id=-1001383199989,
+    )
+
+
+def test_alert_names_the_covered_day_and_the_error():
+    calls = []
+
+    alert_failure(
+        date(2026, 8, 9),
+        RuntimeError("Every LLM provider failed: [gpt] 403 Key limit exceeded"),
+        _config("-1005555"),
+        post=lambda url, payload: calls.append(payload),
+        sleep=_NO_SLEEP,
+    )
+
+    assert len(calls) == 1  # exactly one message, not a split digest
+    assert calls[0]["chat_id"] == "-1005555"
+    text = calls[0]["text"]
+    assert "09.08.2026" in text
+    assert "Every LLM provider failed: [gpt] 403 Key limit exceeded" in text
+
+
+def test_no_alert_is_attempted_when_the_alert_chat_is_unset(caplog):
+    calls = []
+
+    alert_failure(
+        date(2026, 8, 9),
+        RuntimeError("боль"),
+        _config(None),
+        post=lambda url, payload: calls.append(payload),
+        sleep=_NO_SLEEP,
+    )
+
+    assert calls == []  # not even an attempt — there is nowhere to send
+    assert "TELEGRAM_ALERT_CHAT_ID" in caplog.text
+
+
+def test_a_failed_alert_send_never_escapes(caplog):
+    # The caller re-raises the original failure right after alerting. If the
+    # alert raised, it would replace the reason the digest died with the reason
+    # Telegram was unhappy — the log would name the wrong culprit.
+    def broken(url, payload):
+        raise RuntimeError("Telegram недоступен")
+
+    alert_failure(
+        date(2026, 8, 9),
+        RuntimeError("исходная причина провала"),
+        _config("-1005555"),
+        post=broken,
+        sleep=_NO_SLEEP,
+    )
+
+    assert "Telegram недоступен" in caplog.text
+
+
+def test_alert_escapes_html_in_the_error_message():
+    # The alert goes out with parse_mode=HTML, and a provider error body can
+    # itself be an HTML page from a proxy. Unescaped, Telegram rejects the whole
+    # message with a 400 — the alert about a failure would fail silently.
+    calls = []
+
+    alert_failure(
+        date(2026, 8, 9),
+        RuntimeError("<html>502 Bad Gateway</html> & retry"),
+        _config("-1005555"),
+        post=lambda url, payload: calls.append(payload),
+        sleep=_NO_SLEEP,
+    )
+
+    text = calls[0]["text"]
+    assert "<html>" not in text
+    assert "&lt;html&gt;502 Bad Gateway&lt;/html&gt; &amp; retry" in text
+    assert "<b>" in text  # our own markup still renders
+
+
+def test_a_huge_error_message_still_fits_one_telegram_message():
+    # Worst case for escaping: every '&' becomes '&amp;', five chars for one.
+    # An over-limit message is rejected outright, so the alert must clip itself.
+    calls = []
+
+    alert_failure(
+        date(2026, 8, 9),
+        RuntimeError("&" * 20_000),
+        _config("-1005555"),
+        post=lambda url, payload: calls.append(payload),
+        sleep=_NO_SLEEP,
+    )
+
+    assert len(calls) == 1  # still one message, never split into many
+    text = calls[0]["text"]
+    assert len(text) <= _TELEGRAM_LIMIT
+    # A clip landing inside "&amp;" would leave a bare '&' and break the parse.
+    assert not re.search(r"&[#0-9a-zA-Z]*$", text)
+
+
+def test_alert_does_not_escape_quotes():
+    # Telegram only requires <, > and & escaped in text; quotes need nothing.
+    # Provider error bodies are JSON and full of them, so escaping quotes would
+    # spend the message budget on '&quot;' without changing what a reader sees.
+    calls = []
+
+    alert_failure(
+        date(2026, 8, 9),
+        RuntimeError('{"error":{"message":"Key limit exceeded"}}'),
+        _config("-1005555"),
+        post=lambda url, payload: calls.append(payload),
+        sleep=_NO_SLEEP,
+    )
+
+    text = calls[0]["text"]
+    assert '{"error":{"message":"Key limit exceeded"}}' in text
+    assert "&quot;" not in text

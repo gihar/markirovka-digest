@@ -54,6 +54,8 @@ class Config:
     llm_providers: tuple[LlmProvider, ...]  # the primary first
     telegram_bot_token: str
     telegram_digest_chat_id: str
+    # Chat that receives failure alerts; None when unset — see _alert_chat_id.
+    telegram_alert_chat_id: str | None
     channels: tuple[ChannelConfig, ...]
     prompt_path: Path
     min_message_length: int
@@ -118,6 +120,29 @@ def _require_env(name: str) -> str:
     return value
 
 
+def _alert_chat_id(digest_chat_id: str) -> str | None:
+    """The optional alert chat, or None when it is not configured.
+
+    Optional by design: a run that fails is worth shouting about, but an
+    unconfigured alert must never turn a working deployment into a failing one.
+    An empty value counts as unset — deployment platforms and .env files hand
+    out empty strings for variables nobody filled in.
+
+    The Digest Channel itself is rejected: alerts there would show readers
+    internal plumbing, and Telegram forwards channel posts into the linked
+    Monitored Chat, feeding every alert back into the next Digest's input. The
+    comparison is exact, so it catches the copy-paste mistake but not an
+    @username that happens to alias the same chat.
+    """
+    value = os.environ.get("TELEGRAM_ALERT_CHAT_ID") or None
+    if value is not None and value == digest_chat_id:
+        raise ValueError(
+            f"TELEGRAM_ALERT_CHAT_ID must not be the Digest Channel "
+            f"({digest_chat_id}) — alerts belong in a separate chat"
+        )
+    return value
+
+
 def _primary_provider() -> LlmProvider:
     """Build the primary LLM provider from its environment variables."""
     return LlmProvider(
@@ -173,6 +198,9 @@ def load_config() -> Config:
         llm_providers=_llm_providers(),
         telegram_bot_token=_require_env("TELEGRAM_BOT_TOKEN"),
         telegram_digest_chat_id=_require_env("TELEGRAM_DIGEST_CHAT_ID"),
+        telegram_alert_chat_id=_alert_chat_id(
+            _require_env("TELEGRAM_DIGEST_CHAT_ID")
+        ),
         channels=channels,
         prompt_path=PROMPT_PATH,
         min_message_length=settings.get("min_message_length", 30),

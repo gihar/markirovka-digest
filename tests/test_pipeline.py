@@ -3,7 +3,9 @@
 from datetime import date
 from pathlib import Path
 
-from main import run_pipeline
+import pytest
+
+from main import run_and_alert_on_failure, run_pipeline
 from models import DigestResult, TelegramMessage
 from datetime import UTC, datetime
 
@@ -77,3 +79,28 @@ def test_non_empty_day_generates_and_publishes():
     assert result == 2
     assert seen["date_str"] == "2026-07-04"  # the covered MSK day
     assert seen["digest"].markdown == "итоги"
+
+
+def test_a_failed_run_alerts_once_and_still_fails():
+    # The alert is a side note, never a substitute: the exception has to keep
+    # propagating or the cron run exits 0 and the platform reports success.
+    alerted = []
+    boom = RuntimeError("Every LLM provider failed")
+
+    def work():
+        raise boom
+
+    with pytest.raises(RuntimeError) as caught:
+        run_and_alert_on_failure(work, alerted.append)
+
+    assert caught.value is boom  # the original error, not the alert's
+    assert alerted == [boom]  # exactly one alert
+
+
+def test_a_successful_run_alerts_nobody():
+    alerted = []
+
+    result = run_and_alert_on_failure(lambda: 2, alerted.append)
+
+    assert result == 2
+    assert alerted == []

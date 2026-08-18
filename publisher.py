@@ -277,3 +277,77 @@ def publish(digest: DigestResult, config: Config) -> int:
     return send_parts(
         parts, config.telegram_bot_token, config.telegram_digest_chat_id
     )
+
+
+# Marks an alert whose error message was too long to carry whole.
+_CLIP_MARK: str = "…"
+# A half-written entity ("&am") left by a clip would break the HTML parse.
+_TRAILING_ENTITY = re.compile(r"&[#0-9a-zA-Z]*$")
+
+
+def _clip_html(text: str, limit: int) -> str:
+    """Clip already-escaped HTML to ``limit`` chars, never inside an entity."""
+    if len(text) <= limit:
+        return text
+    cut = _TRAILING_ENTITY.sub("", text[: limit - len(_CLIP_MARK)])
+    return cut + _CLIP_MARK
+
+
+def render_alert(day: date, error: BaseException) -> str:
+    """Render a failed run as one short Telegram message.
+
+    Names the covered day and the exception, and stays within a single message:
+    an alert that had to be split, or that overran the limit and was rejected,
+    is an alert that does not arrive.
+    """
+    header = f"⚠️ <b>Дайджест за {day.strftime('%d.%m.%Y')} не опубликован</b>\n\n"
+    reason = str(error) or error.__class__.__name__
+    # Everything below the header comes from an exception, so it is
+    # accident-shaped text: an LlmError carries the provider's response body,
+    # which can be a whole HTML page from a proxy. Escaped, or Telegram rejects
+    # the alert with a 400 and the failure stays invisible. Escaping can inflate
+    # the text fivefold ('&' -> '&amp;'), so the clip is applied after it.
+    # quote=False: Telegram needs only <, > and & escaped in text, and provider
+    # error bodies are quote-heavy JSON — escaping quotes would spend the
+    # message budget without changing a single character the reader sees.
+    body = html.escape(f"{error.__class__.__name__}: {reason}", quote=False)
+    return header + _clip_html(body, _TELEGRAM_LIMIT - len(header))
+
+
+def alert_failure(
+    day: date,
+    error: BaseException,
+    config: Config,
+    *,
+    post=_http_post,
+    sleep: Callable[[float], None] = time.sleep,
+) -> None:
+    """Tell the alert chat that the run for ``day`` failed. Never raises.
+
+    Best-effort by contract: an unconfigured alert chat and an undeliverable
+    alert are both logged and swallowed, so callers can alert and then re-raise
+    the original failure without the alert ever becoming the failure.
+    """
+    if not config.telegram_alert_chat_id:
+        logger.warning(
+            "Run for %s failed and TELEGRAM_ALERT_CHAT_ID is not set — "
+            "no alert sent. The failure is in this log only.",
+            day,
+        )
+        return
+
+    try:
+        send_parts(
+            [render_alert(day, error)],
+            config.telegram_bot_token,
+            config.telegram_alert_chat_id,
+            post=post,
+            sleep=sleep,
+        )
+    except Exception as alert_error:
+        # Deliberately broad: the caller re-raises the failure this alert
+        # reports, and an alert that raised would replace the reason the digest
+        # died with the reason Telegram was unhappy.
+        logger.error(
+            "Could not deliver the failure alert for %s: %s", day, alert_error
+        )

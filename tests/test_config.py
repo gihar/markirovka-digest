@@ -195,3 +195,45 @@ def test_shipped_channels_toml_declares_the_digest_channel():
     _, settings = _load_channels(CHANNELS_PATH)
 
     assert isinstance(_digest_channel_id(settings, CHANNELS_PATH), int)
+
+
+def test_alert_chat_is_optional_and_absent_by_default(tmp_path, monkeypatch):
+    # An unconfigured alert must never turn a working deployment into a failing
+    # one: no TELEGRAM_ALERT_CHAT_ID simply means no alerts.
+    _point_config_at(tmp_path, monkeypatch)
+    for k, v in _ALL_ENV.items():
+        monkeypatch.setenv(k, v)
+    monkeypatch.delenv("TELEGRAM_ALERT_CHAT_ID", raising=False)
+
+    cfg = load_config()
+
+    assert cfg.telegram_alert_chat_id is None
+
+
+@pytest.mark.parametrize(
+    ("raw", "expected"),
+    [("-1005555555", "-1005555555"), ("@digest_alerts", "@digest_alerts"), ("", None)],
+    ids=["numeric-id", "username", "empty-counts-as-unset"],
+)
+def test_alert_chat_is_read_from_the_environment(tmp_path, monkeypatch, raw, expected):
+    _point_config_at(tmp_path, monkeypatch)
+    for k, v in _ALL_ENV.items():
+        monkeypatch.setenv(k, v)
+    monkeypatch.setenv("TELEGRAM_ALERT_CHAT_ID", raw)
+
+    cfg = load_config()
+
+    assert cfg.telegram_alert_chat_id == expected
+
+
+def test_alert_chat_must_not_be_the_digest_chat(tmp_path, monkeypatch):
+    # Alerts in the Digest Channel would show readers internal plumbing, and
+    # Telegram forwards channel posts into the linked Monitored Chat — feeding
+    # the alert straight back into the next Digest's input.
+    _point_config_at(tmp_path, monkeypatch)
+    for k, v in _ALL_ENV.items():
+        monkeypatch.setenv(k, v)
+    monkeypatch.setenv("TELEGRAM_ALERT_CHAT_ID", _ALL_ENV["TELEGRAM_DIGEST_CHAT_ID"])
+
+    with pytest.raises(ValueError, match="TELEGRAM_ALERT_CHAT_ID"):
+        load_config()

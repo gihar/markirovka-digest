@@ -55,11 +55,18 @@ Environment variables (see [`.env.example`](.env.example)):
 | `LLM_FALLBACK_MODEL` | Optional fallback provider — model id (keep it non-reasoning) |
 | `TELEGRAM_BOT_TOKEN` | Bot that posts the digest |
 | `TELEGRAM_DIGEST_CHAT_ID` | Destination channel/chat id |
+| `TELEGRAM_ALERT_CHAT_ID` | Optional chat for failure alerts (must differ from the digest chat) |
 
 The three `LLM_FALLBACK_*` variables are optional as a group: set all of them or
 none. When they are set, a failed request to the primary provider falls through
 to the fallback instead of losing the day's digest; the reasoning behind it and
 the measurements are in [ADR-0002](docs/adr/0002-fallback-llm-provider.md).
+
+`TELEGRAM_ALERT_CHAT_ID` is optional on its own: when a run fails, one short
+message naming the covered day and the error is sent there through the same
+bot, and the run still exits non-zero. Unset, a failed run is logged and
+nothing is sent. It must not be the digest chat — alerts posted to the Digest
+Channel come back as input to the next digest.
 
 The chats to digest are pinned in [`channels.toml`](channels.toml) as an explicit
 allow-list of `chat_id`s (titles are read from the Message Store). Digest window
