@@ -30,6 +30,11 @@ _HTTP_TIMEOUT: int = 60
 # others report "max_tokens".
 _TRUNCATION_FINISH_REASONS: frozenset[str] = frozenset({"length", "max_tokens"})
 
+# How much of a failed response's body goes into the error message. Enough for a
+# provider's JSON error envelope, short enough that an HTML error page from a
+# proxy doesn't flood the log.
+_ERROR_BODY_LIMIT: int = 500
+
 
 class LlmError(RuntimeError):
     """Raised when the LLM request fails or returns an unusable response."""
@@ -69,10 +74,33 @@ def prepare_messages_markdown(messages: list[TelegramMessage]) -> str:
     return "\n\n".join(sections)
 
 
+def _error_body(exc: httpx.HTTPError) -> str:
+    """The provider's own explanation for a failed request, if it sent one.
+
+    httpx puts only the status code and URL in the exception message, while the
+    actual reason — "Key limit exceeded", insufficient credits, a moderation
+    flag — sits in the response body. Without it a failed run logs a bare
+    "403 Forbidden" and says nothing about what to fix.
+    """
+    resp = getattr(exc, "response", None)
+    if resp is None:
+        return ""
+    try:
+        body = resp.text.strip()
+    except (httpx.HTTPError, UnicodeDecodeError):
+        return ""
+    if not body:
+        return ""
+    if len(body) > _ERROR_BODY_LIMIT:
+        body = body[:_ERROR_BODY_LIMIT] + "…"
+    return f"\nProvider response: {body}"
+
+
 def _http_post(url: str, headers: dict, payload: dict) -> dict:
     """POST to the chat-completions endpoint and return the parsed JSON.
 
-    Raises LlmError on timeout or a non-2xx response.
+    Raises LlmError on timeout or a non-2xx response, carrying the provider's
+    error body so the failure is diagnosable from the log alone.
     """
     try:
         with httpx.Client() as client:
@@ -82,7 +110,7 @@ def _http_post(url: str, headers: dict, payload: dict) -> dict:
             resp.raise_for_status()
             return resp.json()
     except httpx.HTTPError as exc:
-        raise LlmError(f"LLM request failed: {exc}") from exc
+        raise LlmError(f"LLM request failed: {exc}{_error_body(exc)}") from exc
 
 
 def _extract_content(data: dict) -> str:

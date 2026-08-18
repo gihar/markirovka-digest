@@ -2,9 +2,10 @@
 
 from datetime import UTC, datetime
 
+import httpx
 import pytest
 
-from analyzer import LlmError, generate_digest, prepare_messages_markdown
+from analyzer import LlmError, _http_post, generate_digest, prepare_messages_markdown
 from models import TelegramMessage
 
 
@@ -128,3 +129,58 @@ def test_absent_finish_reason_returns_content(tmp_path):
         post=lambda url, headers, payload: _ok_response("# Итоги"),
     )
     assert result.markdown == "# Итоги"
+
+
+def _mock_transport(monkeypatch, handler):
+    """Make _http_post's httpx.Client answer via `handler` instead of the network."""
+    real_client = httpx.Client  # bind before patching, or the stand-in recurses
+    monkeypatch.setattr(
+        httpx, "Client", lambda *a, **kw: real_client(transport=httpx.MockTransport(handler))
+    )
+
+
+def _post(monkeypatch, handler):
+    _mock_transport(monkeypatch, handler)
+    return _http_post("https://x/v1/chat/completions", {}, {"model": "m"})
+
+
+def test_http_post_returns_parsed_json(monkeypatch):
+    data = _post(monkeypatch, lambda req: httpx.Response(200, json=_ok_response()))
+
+    assert data == _ok_response()
+
+
+def test_http_post_error_message_carries_provider_reason(monkeypatch):
+    """A bare '403 Forbidden' in the logs hides the reason — the body has it."""
+    body = {"error": {"message": "Key limit exceeded (total limit).", "code": 403}}
+
+    with pytest.raises(LlmError) as excinfo:
+        _post(monkeypatch, lambda req: httpx.Response(403, json=body))
+
+    message = str(excinfo.value)
+    assert "403" in message
+    assert "Key limit exceeded (total limit)." in message
+
+
+def test_http_post_truncates_a_long_error_body(monkeypatch):
+    html = "<html>" + "x" * 5000 + "</html>"
+
+    with pytest.raises(LlmError) as excinfo:
+        _post(monkeypatch, lambda req: httpx.Response(502, text=html))
+
+    message = str(excinfo.value)
+    assert len(message) < 1000
+    assert "…" in message
+
+
+def test_http_post_empty_error_body_still_raises(monkeypatch):
+    with pytest.raises(LlmError, match="401"):
+        _post(monkeypatch, lambda req: httpx.Response(401, text="   "))
+
+
+def test_http_post_connection_failure_raises_without_a_response(monkeypatch):
+    def refuse(request):
+        raise httpx.ConnectError("connection refused", request=request)
+
+    with pytest.raises(LlmError, match="connection refused"):
+        _post(monkeypatch, refuse)
