@@ -31,6 +31,21 @@ class ChannelConfig:
 
 
 @dataclass(frozen=True)
+class LlmProvider:
+    """An OpenAI-compatible endpoint the Digest can be generated through.
+
+    The three values only mean anything together — a base URL without its key
+    and model names nothing callable — so they travel as one value. A fallback
+    provider (ADR-0002) is then another value of this type rather than another
+    triple of parallel arguments.
+    """
+
+    base_url: str  # up to /v1; "/chat/completions" is appended
+    api_key: str
+    model: str  # provider model id, e.g. "anthropic/claude-sonnet-4.6"
+
+
+@dataclass(frozen=True)
 class DigestResult:
     """The output of the digest generation pipeline."""
 

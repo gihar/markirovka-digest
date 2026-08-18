@@ -59,9 +59,7 @@ def run() -> None:
                 msgs,
                 prompt_path,
                 date_str,
-                base_url=config.llm_base_url,
-                api_key=config.llm_api_key,
-                model=config.llm_model,
+                provider=config.llm_provider,
             ),
             publish_digest=lambda digest: publish(digest, config),
         )

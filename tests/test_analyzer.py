@@ -6,11 +6,19 @@ import httpx
 import pytest
 
 from analyzer import LlmError, _http_post, generate_digest, prepare_messages_markdown
-from models import TelegramMessage
+from models import LlmProvider, TelegramMessage
 
 
 def _msg(chat="Маркировка. Молоко", text="привет"):
     return TelegramMessage(-1, chat, "ivan", text, datetime(2026, 7, 4, 10, 0, tzinfo=UTC))
+
+
+def _provider(
+    base_url="https://openrouter.ai/api/v1",
+    api_key="sk-or-xxx",
+    model="anthropic/claude-sonnet-4.6",
+):
+    return LlmProvider(base_url=base_url, api_key=api_key, model=model)
 
 
 def _prompt(tmp_path):
@@ -52,9 +60,7 @@ def test_generate_digest_posts_openai_payload_and_returns_content(tmp_path):
 
     result = generate_digest(
         [_msg()], _prompt(tmp_path), "2026-07-04",
-        base_url="https://openrouter.ai/api/v1",
-        api_key="sk-or-xxx",
-        model="anthropic/claude-sonnet-4.6",
+        provider=_provider(),
         post=fake_post,
     )
 
@@ -74,7 +80,7 @@ def test_generate_digest_posts_openai_payload_and_returns_content(tmp_path):
 def _generate(tmp_path, post):
     return generate_digest(
         [_msg()], _prompt(tmp_path), "2026-07-04",
-        base_url="https://x/v1", api_key="k", model="m", post=post,
+        provider=_provider("https://x/v1", "k", "m"), post=post,
     )
 
 

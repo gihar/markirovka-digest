@@ -4,6 +4,7 @@ import pytest
 
 import config as config_module
 from config import _load_channels, load_config
+from models import LlmProvider
 
 
 def _write_channels(tmp_path, body: str):
@@ -69,15 +70,17 @@ def test_load_config_fails_fast_when_llm_model_missing(tmp_path, monkeypatch):
         load_config()
 
 
-def test_load_config_reads_llm_params_and_allow_list(tmp_path, monkeypatch):
+def test_load_config_reads_the_llm_provider_and_allow_list(tmp_path, monkeypatch):
     _point_config_at(tmp_path, monkeypatch)
     for k, v in _ALL_ENV.items():
         monkeypatch.setenv(k, v)
     cfg = load_config()
     assert cfg.database_url == "postgresql://u:p@host:5432/db"
-    assert cfg.llm_base_url == "https://openrouter.ai/api/v1"
-    assert cfg.llm_api_key == "sk-or-test"
-    assert cfg.llm_model == "anthropic/claude-sonnet-4.6"
+    assert cfg.llm_provider == LlmProvider(
+        base_url="https://openrouter.ai/api/v1",
+        api_key="sk-or-test",
+        model="anthropic/claude-sonnet-4.6",
+    )
     assert [c.chat_id for c in cfg.channels] == [-1001]
     assert cfg.min_message_length == 30  # default when settings omit it
     assert not hasattr(cfg, "anthropic_api_key")

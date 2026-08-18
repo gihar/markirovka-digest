@@ -14,7 +14,7 @@ from typing import Callable
 
 import httpx
 
-from models import DigestResult, TelegramMessage
+from models import DigestResult, LlmProvider, TelegramMessage
 from window import MSK
 
 logger = logging.getLogger(__name__)
@@ -141,9 +141,7 @@ def generate_digest(
     prompt_path: Path,
     date: str | None = None,
     *,
-    base_url: str,
-    api_key: str,
-    model: str,
+    provider: LlmProvider,
     post: Callable[[str, dict, dict], dict] = _http_post,
 ) -> DigestResult:
     """Generate a digest from messages via an OpenAI-compatible LLM.
@@ -152,9 +150,7 @@ def generate_digest(
         messages: Messages to analyze.
         prompt_path: Path to the system prompt markdown file.
         date: Digest date (YYYY-MM-DD) — the covered MSK day. Defaults to today.
-        base_url: LLM base URL up to /v1 (chat/completions is appended).
-        api_key: Bearer token.
-        model: Provider model id (e.g. "anthropic/claude-sonnet-4.6").
+        provider: LLM provider to call — base URL, API key, and model.
         post: Injectable transport seam (url, headers, payload) -> response dict.
 
     Raises:
@@ -176,13 +172,13 @@ def generate_digest(
             token_count=0,
         )
 
-    url = base_url.rstrip("/") + "/chat/completions"
+    url = provider.base_url.rstrip("/") + "/chat/completions"
     headers = {
-        "Authorization": f"Bearer {api_key}",
+        "Authorization": f"Bearer {provider.api_key}",
         "Content-Type": "application/json",
     }
     payload = {
-        "model": model,
+        "model": provider.model,
         "max_tokens": MAX_OUTPUT_TOKENS,
         "messages": [
             {"role": "system", "content": prompt_text},
@@ -190,12 +186,16 @@ def generate_digest(
         ],
     }
 
-    logger.info("Requesting digest: model=%s, ~%d input chars", model, len(messages_md))
+    logger.info(
+        "Requesting digest: model=%s, ~%d input chars", provider.model, len(messages_md)
+    )
     data = post(url, headers, payload)
     digest_markdown = _extract_content(data)
 
     chat_titles = {m.chat_title for m in messages}
-    logger.info("Digest generated: %d chars, model=%s", len(digest_markdown), model)
+    logger.info(
+        "Digest generated: %d chars, model=%s", len(digest_markdown), provider.model
+    )
 
     return DigestResult(
         date=date,

@@ -12,7 +12,7 @@ import tomllib
 from dataclasses import dataclass
 from pathlib import Path
 
-from models import ChannelConfig
+from models import ChannelConfig, LlmProvider
 
 # Project root is the directory containing this file
 PROJECT_ROOT: Path = Path(__file__).resolve().parent
@@ -35,9 +35,7 @@ class Config:
     """Immutable application configuration."""
 
     database_url: str
-    llm_base_url: str
-    llm_api_key: str
-    llm_model: str
+    llm_provider: LlmProvider
     telegram_bot_token: str
     telegram_digest_chat_id: str
     channels: tuple[ChannelConfig, ...]
@@ -82,6 +80,15 @@ def _require_env(name: str) -> str:
     return value
 
 
+def _llm_provider() -> LlmProvider:
+    """Build the configured LLM provider from its environment variables."""
+    return LlmProvider(
+        base_url=_require_env("LLM_BASE_URL"),
+        api_key=_require_env("LLM_API_KEY"),
+        model=_require_env("LLM_MODEL"),
+    )
+
+
 def load_config() -> Config:
     """Load and validate all configuration. Fail fast on missing values."""
     missing = [k for k in REQUIRED_ENV if not os.environ.get(k)]
@@ -94,9 +101,7 @@ def load_config() -> Config:
 
     return Config(
         database_url=_require_env("DATABASE_URL"),
-        llm_base_url=_require_env("LLM_BASE_URL"),
-        llm_api_key=_require_env("LLM_API_KEY"),
-        llm_model=_require_env("LLM_MODEL"),
+        llm_provider=_llm_provider(),
         telegram_bot_token=_require_env("TELEGRAM_BOT_TOKEN"),
         telegram_digest_chat_id=_require_env("TELEGRAM_DIGEST_CHAT_ID"),
         channels=channels,
