@@ -54,3 +54,7 @@ class DigestResult:
     message_count: int
     chat_count: int
     token_count: int
+    # Model that actually produced this digest — the primary one on a normal
+    # day, the fallback's when the primary was down (ADR-0002). None when no
+    # LLM ran at all, i.e. there was nothing to digest.
+    model: str | None

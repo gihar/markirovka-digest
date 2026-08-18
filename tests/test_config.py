@@ -79,21 +79,64 @@ def test_load_config_fails_fast_when_llm_model_missing(tmp_path, monkeypatch):
         load_config()
 
 
-def test_load_config_reads_the_llm_provider_and_allow_list(tmp_path, monkeypatch):
+_FALLBACK_ENV = {
+    "LLM_FALLBACK_BASE_URL": "https://api.neuraldeep.ru/v1",
+    "LLM_FALLBACK_API_KEY": "nd-test",
+    "LLM_FALLBACK_MODEL": "qwen3.6-unlim-noreason",
+}
+
+
+def _without_fallback(monkeypatch):
+    """No fallback in the environment — the pre-ADR-0002 single-provider setup."""
+    for k in _FALLBACK_ENV:
+        monkeypatch.delenv(k, raising=False)
+
+
+_PRIMARY = LlmProvider(
+    base_url="https://openrouter.ai/api/v1",
+    api_key="sk-or-test",
+    model="anthropic/claude-sonnet-4.6",
+)
+
+
+def test_load_config_without_a_fallback_reads_one_provider(tmp_path, monkeypatch):
     _point_config_at(tmp_path, monkeypatch)
     for k, v in _ALL_ENV.items():
         monkeypatch.setenv(k, v)
+    _without_fallback(monkeypatch)
     cfg = load_config()
     assert cfg.database_url == "postgresql://u:p@host:5432/db"
-    assert cfg.llm_provider == LlmProvider(
-        base_url="https://openrouter.ai/api/v1",
-        api_key="sk-or-test",
-        model="anthropic/claude-sonnet-4.6",
-    )
+    assert cfg.llm_providers == (_PRIMARY,)
     assert [c.chat_id for c in cfg.channels] == [-1001]
     assert cfg.min_message_length == 30  # default when settings omit it
     assert not hasattr(cfg, "anthropic_api_key")
     assert not hasattr(cfg, "telegram_session")
+
+
+def test_load_config_with_a_fallback_puts_the_primary_first(tmp_path, monkeypatch):
+    _point_config_at(tmp_path, monkeypatch)
+    for k, v in {**_ALL_ENV, **_FALLBACK_ENV}.items():
+        monkeypatch.setenv(k, v)
+    cfg = load_config()
+    assert cfg.llm_providers == (
+        _PRIMARY,
+        LlmProvider(
+            base_url="https://api.neuraldeep.ru/v1",
+            api_key="nd-test",
+            model="qwen3.6-unlim-noreason",
+        ),
+    )
+
+
+def test_half_configured_fallback_is_rejected(tmp_path, monkeypatch):
+    """A fallback that looks configured and isn't is worse than none at all."""
+    _point_config_at(tmp_path, monkeypatch)
+    for k, v in {**_ALL_ENV, **_FALLBACK_ENV}.items():
+        monkeypatch.setenv(k, v)
+    monkeypatch.delenv("LLM_FALLBACK_API_KEY")
+
+    with pytest.raises(ValueError, match="LLM_FALLBACK_API_KEY"):
+        load_config()
 
 
 def test_load_config_reads_the_digest_channel_id(tmp_path, monkeypatch):

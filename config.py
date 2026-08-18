@@ -30,12 +30,28 @@ REQUIRED_ENV: tuple[str, ...] = (
 )
 
 
+# Optional secondary LLM provider (ADR-0002): a failed request falls through to
+# it instead of costing the day's Digest. Optional as a group — see
+# _fallback_provider.
+#
+# Keep LLM_FALLBACK_MODEL a NON-REASONING model. Reasoning tokens are billed
+# against the same max_tokens budget as the answer: on the heaviest real day the
+# reasoning variant took 55.7 s and 6542 of 8192 tokens against 11.7 s and 1464
+# for the non-reasoning one, so it trips both _HTTP_TIMEOUT and the truncation
+# guard in analyzer.py. Raise both caps there before pinning a reasoning model.
+FALLBACK_ENV: tuple[str, ...] = (
+    "LLM_FALLBACK_BASE_URL",
+    "LLM_FALLBACK_API_KEY",
+    "LLM_FALLBACK_MODEL",
+)
+
+
 @dataclass(frozen=True)
 class Config:
     """Immutable application configuration."""
 
     database_url: str
-    llm_provider: LlmProvider
+    llm_providers: tuple[LlmProvider, ...]  # the primary first
     telegram_bot_token: str
     telegram_digest_chat_id: str
     channels: tuple[ChannelConfig, ...]
@@ -102,13 +118,44 @@ def _require_env(name: str) -> str:
     return value
 
 
-def _llm_provider() -> LlmProvider:
-    """Build the configured LLM provider from its environment variables."""
+def _primary_provider() -> LlmProvider:
+    """Build the primary LLM provider from its environment variables."""
     return LlmProvider(
         base_url=_require_env("LLM_BASE_URL"),
         api_key=_require_env("LLM_API_KEY"),
         model=_require_env("LLM_MODEL"),
     )
+
+
+def _fallback_provider() -> LlmProvider | None:
+    """Build the optional secondary provider, or None when it is not configured.
+
+    All three variables or none: a half-configured fallback looks configured and
+    isn't, so the gap would only surface on the day the primary is down.
+    """
+    missing = [name for name in FALLBACK_ENV if not os.environ.get(name)]
+    if len(missing) == len(FALLBACK_ENV):
+        return None
+    if missing:
+        raise ValueError(
+            "Fallback LLM provider is half-configured: set all of "
+            f"{', '.join(FALLBACK_ENV)} or none of them. "
+            f"Missing: {', '.join(missing)}"
+        )
+    return LlmProvider(
+        base_url=_require_env("LLM_FALLBACK_BASE_URL"),
+        api_key=_require_env("LLM_FALLBACK_API_KEY"),
+        model=_require_env("LLM_FALLBACK_MODEL"),
+    )
+
+
+def _llm_providers() -> tuple[LlmProvider, ...]:
+    """The providers to try, in order: the primary first, the fallback after."""
+    primary = _primary_provider()
+    fallback = _fallback_provider()
+    if fallback is None:
+        return (primary,)
+    return (primary, fallback)
 
 
 def load_config() -> Config:
@@ -123,7 +170,7 @@ def load_config() -> Config:
 
     return Config(
         database_url=_require_env("DATABASE_URL"),
-        llm_provider=_llm_provider(),
+        llm_providers=_llm_providers(),
         telegram_bot_token=_require_env("TELEGRAM_BOT_TOKEN"),
         telegram_digest_chat_id=_require_env("TELEGRAM_DIGEST_CHAT_ID"),
         channels=channels,

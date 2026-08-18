@@ -63,7 +63,7 @@ def run() -> None:
                 msgs,
                 prompt_path,
                 date_str,
-                provider=config.llm_provider,
+                providers=config.llm_providers,
             ),
             publish_digest=lambda digest: publish(digest, config),
         )

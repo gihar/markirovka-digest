@@ -22,7 +22,12 @@ def _msg():
 
 def _digest():
     return DigestResult(
-        date="2026-07-04", markdown="итоги", message_count=1, chat_count=1, token_count=1
+        date="2026-07-04",
+        markdown="итоги",
+        message_count=1,
+        chat_count=1,
+        token_count=1,
+        model="anthropic/claude-sonnet-4.6",
     )
 
 

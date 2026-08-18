@@ -23,6 +23,7 @@ def _digest(markdown: str) -> DigestResult:
         message_count=1,
         chat_count=1,
         token_count=1,
+        model="anthropic/claude-sonnet-4.6",
     )
 
 

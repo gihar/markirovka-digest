@@ -50,8 +50,16 @@ Environment variables (see [`.env.example`](.env.example)):
 | `LLM_BASE_URL` | OpenAI-compatible base URL up to `/v1` (e.g. `https://openrouter.ai/api/v1`) |
 | `LLM_API_KEY` | Bearer token for the LLM endpoint |
 | `LLM_MODEL` | Provider model id (e.g. `anthropic/claude-sonnet-4.6`) |
+| `LLM_FALLBACK_BASE_URL` | Optional fallback provider — base URL up to `/v1` |
+| `LLM_FALLBACK_API_KEY` | Optional fallback provider — bearer token |
+| `LLM_FALLBACK_MODEL` | Optional fallback provider — model id (keep it non-reasoning) |
 | `TELEGRAM_BOT_TOKEN` | Bot that posts the digest |
 | `TELEGRAM_DIGEST_CHAT_ID` | Destination channel/chat id |
+
+The three `LLM_FALLBACK_*` variables are optional as a group: set all of them or
+none. When they are set, a failed request to the primary provider falls through
+to the fallback instead of losing the day's digest; the reasoning behind it and
+the measurements are in [ADR-0002](docs/adr/0002-fallback-llm-provider.md).
 
 The chats to digest are pinned in [`channels.toml`](channels.toml) as an explicit
 allow-list of `chat_id`s (titles are read from the Message Store). Digest window

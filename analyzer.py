@@ -136,42 +136,16 @@ def _extract_content(data: dict) -> str:
     return content
 
 
-def generate_digest(
-    messages: list[TelegramMessage],
-    prompt_path: Path,
-    date: str | None = None,
-    *,
+def _request_digest(
     provider: LlmProvider,
-    post: Callable[[str, dict, dict], dict] = _http_post,
-) -> DigestResult:
-    """Generate a digest from messages via an OpenAI-compatible LLM.
+    prompt_text: str,
+    messages_md: str,
+    post: Callable[[str, dict, dict], dict],
+) -> str:
+    """Ask one provider for the digest and return its markdown.
 
-    Args:
-        messages: Messages to analyze.
-        prompt_path: Path to the system prompt markdown file.
-        date: Digest date (YYYY-MM-DD) — the covered MSK day. Defaults to today.
-        provider: LLM provider to call — base URL, API key, and model.
-        post: Injectable transport seam (url, headers, payload) -> response dict.
-
-    Raises:
-        FileNotFoundError: If the prompt file doesn't exist.
-        LlmError: On request failure or an unusable response.
+    Raises LlmError if the request fails or the response is unusable.
     """
-    if date is None:
-        date = datetime.now().strftime("%Y-%m-%d")
-
-    prompt_text = _load_prompt(prompt_path)
-    messages_md = prepare_messages_markdown(messages)
-
-    if not messages_md:
-        return DigestResult(
-            date=date,
-            markdown="Нет сообщений для дайджеста.",
-            message_count=0,
-            chat_count=0,
-            token_count=0,
-        )
-
     url = provider.base_url.rstrip("/") + "/chat/completions"
     headers = {
         "Authorization": f"Bearer {provider.api_key}",
@@ -191,18 +165,97 @@ def generate_digest(
     )
     data = post(url, headers, payload)
     digest_markdown = _extract_content(data)
-
-    chat_titles = {m.chat_title for m in messages}
     logger.info(
         "Digest generated: %d chars, model=%s", len(digest_markdown), provider.model
+    )
+    return digest_markdown
+
+
+def _digest_from_first_working_provider(
+    providers: tuple[LlmProvider, ...],
+    prompt_text: str,
+    messages_md: str,
+    post: Callable[[str, dict, dict], dict],
+) -> tuple[str, str]:
+    """Return (digest markdown, model) from the first provider that answers.
+
+    Providers are tried in order, so a provider outage costs the digest's
+    quality for the day instead of costing the day (ADR-0002). A failing one is
+    logged with its model and the next is tried.
+
+    Raises:
+        LlmError: When every provider failed, carrying each one's own reason —
+            one of them may be a silently-expired fallback key, invisible until
+            the day it is needed.
+    """
+    failures: list[str] = []
+    last_error: LlmError | None = None
+
+    for provider in providers:
+        try:
+            digest_markdown = _request_digest(provider, prompt_text, messages_md, post)
+        except LlmError as exc:
+            logger.warning("LLM provider failed (model=%s): %s", provider.model, exc)
+            failures.append(f"[{provider.model}] {exc}")
+            last_error = exc
+            continue
+        return digest_markdown, provider.model
+
+    raise LlmError("Every LLM provider failed: " + "; ".join(failures)) from last_error
+
+
+def generate_digest(
+    messages: list[TelegramMessage],
+    prompt_path: Path,
+    date: str | None = None,
+    *,
+    providers: tuple[LlmProvider, ...],
+    post: Callable[[str, dict, dict], dict] = _http_post,
+) -> DigestResult:
+    """Generate a digest from messages via an OpenAI-compatible LLM.
+
+    Args:
+        messages: Messages to analyze.
+        prompt_path: Path to the system prompt markdown file.
+        date: Digest date (YYYY-MM-DD) — the covered MSK day. Defaults to today.
+        providers: LLM providers to try, in order — the primary first.
+        post: Injectable transport seam (url, headers, payload) -> response dict.
+
+    Raises:
+        ValueError: If no provider was given.
+        FileNotFoundError: If the prompt file doesn't exist.
+        LlmError: If every provider failed.
+    """
+    if not providers:
+        raise ValueError("generate_digest needs at least one LLM provider")
+
+    if date is None:
+        date = datetime.now().strftime("%Y-%m-%d")
+
+    prompt_text = _load_prompt(prompt_path)
+    messages_md = prepare_messages_markdown(messages)
+
+    if not messages_md:
+        return DigestResult(
+            date=date,
+            markdown="Нет сообщений для дайджеста.",
+            message_count=0,
+            chat_count=0,
+            token_count=0,
+            model=None,
+        )
+
+    digest_markdown, model = _digest_from_first_working_provider(
+        providers, prompt_text, messages_md, post
     )
 
     return DigestResult(
         date=date,
         markdown=digest_markdown,
         message_count=len(messages),
-        chat_count=len(chat_titles),
+        chat_count=len({m.chat_title for m in messages}),
         # Rough character-based estimate — no portable token counter across
         # arbitrary OpenAI-compatible providers.
         token_count=len(messages_md) // 4,
+        model=model,
     )

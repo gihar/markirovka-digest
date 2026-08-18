@@ -1,5 +1,6 @@
 """Behavior: format messages, then generate the digest via an OpenAI-compatible LLM."""
 
+import logging
 from datetime import UTC, datetime
 
 import httpx
@@ -60,7 +61,7 @@ def test_generate_digest_posts_openai_payload_and_returns_content(tmp_path):
 
     result = generate_digest(
         [_msg()], _prompt(tmp_path), "2026-07-04",
-        provider=_provider(),
+        providers=(_provider(),),
         post=fake_post,
     )
 
@@ -77,10 +78,80 @@ def test_generate_digest_posts_openai_payload_and_returns_content(tmp_path):
     assert "Маркировка. Молоко" in payload["messages"][1]["content"]
 
 
+def test_first_provider_produces_the_digest_and_the_next_is_untouched(tmp_path):
+    tried = []
+
+    def fake_post(url, headers, payload):
+        tried.append(payload["model"])
+        return _ok_response("# Дайджест")
+
+    result = generate_digest(
+        [_msg()], _prompt(tmp_path), "2026-07-04",
+        providers=(_provider(model="primary"), _provider(model="fallback")),
+        post=fake_post,
+    )
+
+    assert result.markdown == "# Дайджест"
+    assert result.model == "primary"
+    assert tried == ["primary"]
+
+
+def test_a_failed_provider_is_logged_and_the_next_one_is_tried(tmp_path, caplog):
+    """A provider's billing state must not take the whole run down (ADR-0002)."""
+    tried = []
+
+    def fake_post(url, headers, payload):
+        tried.append(payload["model"])
+        if payload["model"] == "primary":
+            raise LlmError("LLM request failed: 403 Key limit exceeded")
+        return _ok_response("# Запасной дайджест")
+
+    with caplog.at_level(logging.WARNING):
+        result = generate_digest(
+            [_msg()], _prompt(tmp_path), "2026-07-04",
+            providers=(_provider(model="primary"), _provider(model="fallback")),
+            post=fake_post,
+        )
+
+    assert result.markdown == "# Запасной дайджест"
+    assert result.model == "fallback"
+    assert tried == ["primary", "fallback"]
+    assert "primary" in caplog.text
+    assert "Key limit exceeded" in caplog.text
+
+
+def test_when_every_provider_fails_the_error_names_them_all(tmp_path):
+    """The run must still exit non-zero, and say which provider failed how."""
+
+    def fake_post(url, headers, payload):
+        raise LlmError(f"LLM request failed: 403 for {payload['model']}")
+
+    with pytest.raises(LlmError) as excinfo:
+        generate_digest(
+            [_msg()], _prompt(tmp_path), "2026-07-04",
+            providers=(_provider(model="primary"), _provider(model="fallback")),
+            post=fake_post,
+        )
+
+    message = str(excinfo.value)
+    assert "primary" in message
+    assert "fallback" in message
+    assert "403" in message
+
+
+def test_generate_digest_without_providers_is_rejected(tmp_path):
+    with pytest.raises(ValueError, match="at least one"):
+        generate_digest(
+            [_msg()], _prompt(tmp_path), "2026-07-04",
+            providers=(),
+            post=lambda url, headers, payload: _ok_response(),
+        )
+
+
 def _generate(tmp_path, post):
     return generate_digest(
         [_msg()], _prompt(tmp_path), "2026-07-04",
-        provider=_provider("https://x/v1", "k", "m"), post=post,
+        providers=(_provider("https://x/v1", "k", "m"),), post=post,
     )
 
 
