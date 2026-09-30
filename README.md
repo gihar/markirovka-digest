@@ -110,9 +110,13 @@ PostgreSQL, so it reaches the database over the private network.
 2. Set the environment variables above. Point `DATABASE_URL` at the PostgreSQL
    service (e.g. reference `${{Postgres.DATABASE_URL}}` so it uses the private
    `postgres.railway.internal` host).
-3. Set the **Cron Schedule** to `0 6 * * *` (09:00 MSK). [`railway.json`](railway.json)
-   also declares this; if Railway's config-as-code cron field differs from your
-   Railway version, set it in the service **Settings → Cron Schedule** instead.
+3. In the service **Settings**, set **Cron Schedule** to `0 6 * * *` (09:00 MSK),
+   **Start Command** to `python main.py` and **Restart Policy** to `NEVER`.
+
+Schedule and start command live in each service's settings, not in
+[`railway.json`](railway.json): the repo serves two services, and a start
+command or cron in the shared file would override both of them. `railway.json`
+only declares the Dockerfile build.
 
 The process runs to completion and exits; the restart policy is `NEVER` so a
 finished (or failed) run is not restarted until the next scheduled tick — a
@@ -120,12 +124,8 @@ missed day is simply skipped (no self-healing, by design).
 
 ### Weekly review service
 
-A second cron service from the same repo, with the same environment variables:
-
-1. Create another service from this repo in the same project.
-2. In its **Settings → Config-as-code**, point the Railway config file at
-   [`railway.weekly.json`](railway.weekly.json): start command
-   `python weekly.py`, cron `0 7 * * 5` (Fridays 10:00 MSK — an hour after the
-   daily run, so Thursday's Digest is already published).
-3. Copy the variables of the daily service (or share them via a Railway
-   shared variable group).
+A second cron service (`markirovka-weekly`) from the same repo and branch, with
+the same environment variables. Its **Settings**: **Cron Schedule**
+`0 7 * * 5` (Fridays 10:00 MSK — an hour after the daily run, so Thursday's
+Digest is already published), **Start Command** `python weekly.py`,
+**Restart Policy** `NEVER`.
