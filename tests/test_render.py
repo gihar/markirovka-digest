@@ -292,8 +292,9 @@ def test_summary_deadlines_quote_and_kratko_stay_unfolded():
 
 
 def test_a_heading_without_a_body_gets_no_empty_fold():
-    [part] = render_parts(_digest("✅ **Тема**\n\nДругой абзац."))
+    [part] = render_parts(_digest("✅ **Тема**\n\n**Кратко**: мелочь"))
     assert "<blockquote" not in part
+    assert "<b>Кратко</b>: мелочь" in part
 
 
 def test_a_split_digest_keeps_every_theme_whole_in_one_part():
@@ -334,3 +335,25 @@ def test_any_title_can_head_the_rendered_parts():
         "📊 <b>Обзор недели</b>\n\n✅ <b>Тема</b>\n"
         "<blockquote expandable>Суть.</blockquote>"
     )
+
+
+def test_blank_lines_inside_a_theme_do_not_stop_the_fold():
+    # Seen on a real run: the model puts a blank line after the heading and
+    # before «Что делать».
+    md = (
+        "Резюме дня.\n\n"
+        "✅ **Тема 1** (Молоко)\n\nСуть 1.\n\n👉 Что делать: действие 1.\n\n"
+        "❓ **Тема 2** (Молоко)\n\nСуть 2.\n\n"
+        "💬 *«цитата»* — ivan, Молоко\n\n"
+        "**Кратко**: мелочь"
+    )
+    [part] = render_parts(_digest(md))
+
+    assert (
+        "✅ <b>Тема 1</b> (Молоко)\n"
+        "<blockquote expandable>Суть 1.\n👉 Что делать: действие 1.</blockquote>\n\n"
+        "❓ <b>Тема 2</b> (Молоко)\n"
+        "<blockquote expandable>Суть 2.</blockquote>\n\n"
+        "💬 <i>«цитата»</i> — ivan, Молоко\n\n"
+        "<b>Кратко</b>: мелочь"
+    ) in part

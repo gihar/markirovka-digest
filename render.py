@@ -157,6 +157,33 @@ def split_message(
 _THEME_HEADING = re.compile(r"^\s*(✅|❓|🔁)")
 
 
+# A paragraph that ends the theme before it: the next theme, the quote of the
+# day, or a bold-led section line («Кратко», «Сроки», weekly section titles).
+_ENDS_THEME = re.compile(r"^\s*(✅|❓|🔁|💬|\*\*)")
+
+
+def _tighten_themes(md: str) -> str:
+    """Pull a theme's paragraphs up against its heading, no blank lines between.
+
+    Models often put a blank line after the heading or before «👉 Что делать»;
+    a theme is then several paragraphs, which neither folds as one body nor
+    stays whole when splitting. Paragraphs after a heading belong to its theme
+    until one starts the next theme or a non-theme section (_ENDS_THEME).
+    """
+    out: list[str] = []
+    in_theme = False
+    for paragraph in md.split("\n\n"):
+        if _THEME_HEADING.match(paragraph):
+            in_theme = True
+            out.append(paragraph)
+        elif in_theme and paragraph.strip() and not _ENDS_THEME.match(paragraph):
+            out[-1] = f"{out[-1]}\n{paragraph.strip(chr(10))}"
+        else:
+            in_theme = False
+            out.append(paragraph)
+    return "\n\n".join(out)
+
+
 def _fold_themes(html_text: str) -> str:
     """Fold each theme's body into an expandable quote under its heading.
 
@@ -266,7 +293,8 @@ def render_titled_parts(
 ) -> list[str]:
     """Render ``title`` over ``markdown`` as Telegram HTML message parts.
 
-    Strips horizontal-rule lines, then splits the raw markdown — sizing each
+    Strips horizontal-rule lines, joins each theme into one paragraph
+    (_tighten_themes), then splits the raw markdown — sizing each
     chunk by its rendered HTML length — and converts each chunk to HTML
     independently, folding theme bodies (_fold_themes). The title lands on the
     first part only. Splitting on the raw source guarantees a split never
@@ -287,7 +315,7 @@ def render_titled_parts(
     def html_len(chunk: str) -> int:
         return len(to_html(chunk))
 
-    body = f"{title}\n\n{_strip_horizontal_rules(markdown)}"
+    body = f"{title}\n\n{_tighten_themes(_strip_horizontal_rules(markdown))}"
 
     # Text that fits whole stays a single, marker-free message.
     if html_len(body) <= limit:
