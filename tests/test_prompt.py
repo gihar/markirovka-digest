@@ -116,3 +116,11 @@ def test_hottest_themes_are_flagged():
     prompt = _prompt()
 
     assert "🔥" in prompt
+
+
+def test_previous_digest_is_reference_only():
+    """ADR-0003: yesterday's Digest informs 🔁, it is never retold."""
+    prompt = _prompt()
+
+    assert "Справка: вчерашний дайджест" in prompt
+    assert "не пересказывай" in prompt

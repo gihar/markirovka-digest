@@ -13,6 +13,7 @@ from datetime import date
 
 import psycopg
 
+from digest_archive import ChannelPost
 from models import TelegramMessage
 
 # Author display name falls back username -> first_name -> 'Unknown'.
@@ -123,3 +124,41 @@ def fetch_digest_messages(
         )
         rows = cur.fetchall()
     return [_row_to_message(row) for row in rows]
+
+
+# Digest Channel posts forwarded into the allow-listed chats from ``since`` (an
+# Europe/Moscow calendar day) on, in publication order. Read only to find
+# published Digests (ADR-0003) — never as discussion input.
+_CHANNEL_POSTS_QUERY = """
+SELECT m.chat_id, COALESCE(m.text, m.caption)
+FROM messages m
+WHERE m.chat_id = ANY(%(chat_ids)s)
+  AND m.forward_from_chat_id = %(digest_channel_id)s
+  AND (m.sent_at AT TIME ZONE 'Europe/Moscow')::date >= %(since)s
+  AND COALESCE(m.text, m.caption) IS NOT NULL
+ORDER BY m.sent_at, m.chat_id, m.message_id
+"""
+
+
+def fetch_channel_posts(
+    conn: psycopg.Connection,
+    chat_ids: Sequence[int],
+    since: date,
+    digest_channel_id: int,
+) -> list[ChannelPost]:
+    """Return the Digest Channel's posts forwarded into the allow-listed chats.
+
+    Only posts sent on ``since`` (Europe/Moscow) or later. These are where
+    published Digests live; see digest_archive.published_digest.
+    """
+    with conn.cursor() as cur:
+        cur.execute(
+            _CHANNEL_POSTS_QUERY,
+            {
+                "chat_ids": list(chat_ids),
+                "digest_channel_id": digest_channel_id,
+                "since": since,
+            },
+        )
+        rows = cur.fetchall()
+    return [ChannelPost(chat_id=chat_id, text=text) for chat_id, text in rows]

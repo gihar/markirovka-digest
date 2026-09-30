@@ -2,7 +2,8 @@
 
 from datetime import UTC, date, datetime
 
-from db import fetch_digest_messages
+from db import fetch_channel_posts, fetch_digest_messages
+from digest_archive import ChannelPost
 
 DAY = date(2026, 7, 4)
 # The Digest Channel: Telegram auto-forwards its posts into the linked
@@ -355,3 +356,38 @@ def test_carries_the_message_a_reply_answers(pg_conn):
 
     assert question.reply_to_message_id is None
     assert answer.reply_to_message_id == 1
+
+
+def test_channel_posts_are_the_digest_channel_forwards_since_a_day(pg_conn):
+    _chat(pg_conn, -1001, "Маркировка. Главный чат")
+    _chat(pg_conn, -2002, "Посторонний чат")
+    _user(pg_conn, 5, username="ivan")
+    _msg(  # 23:00 MSK Jul 2 — too early
+        pg_conn, -1001, 1, None, datetime(2026, 7, 2, 20, 0, tzinfo=UTC),
+        text="старый дайджест", forward_from_chat_id=DIGEST_CHANNEL,
+    )
+    _msg(  # 00:30 MSK Jul 3 — inside
+        pg_conn, -1001, 2, None, datetime(2026, 7, 2, 21, 30, tzinfo=UTC),
+        text="дайджест", forward_from_chat_id=DIGEST_CHANNEL,
+    )
+    _msg(
+        pg_conn, -1001, 3, None, datetime(2026, 7, 3, 6, 5, tzinfo=UTC),
+        text="продолжение", forward_from_chat_id=DIGEST_CHANNEL,
+    )
+    _msg(  # an ordinary message, not from the channel
+        pg_conn, -1001, 4, 5, datetime(2026, 7, 3, 7, 0, tzinfo=UTC),
+        text="обычное сообщение",
+    )
+    _msg(  # outside the allow-list
+        pg_conn, -2002, 5, None, datetime(2026, 7, 3, 7, 0, tzinfo=UTC),
+        text="чужой форвард", forward_from_chat_id=DIGEST_CHANNEL,
+    )
+
+    posts = fetch_channel_posts(
+        pg_conn, [-1001], since=date(2026, 7, 3), digest_channel_id=DIGEST_CHANNEL
+    )
+
+    assert posts == [
+        ChannelPost(chat_id=-1001, text="дайджест"),
+        ChannelPost(chat_id=-1001, text="продолжение"),
+    ]

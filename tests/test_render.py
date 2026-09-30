@@ -3,7 +3,9 @@
 import pytest
 
 from models import DigestResult
-from render import markdown_to_telegram_html, render_parts, split_message
+from datetime import date
+
+from render import digest_title, markdown_to_telegram_html, render_parts, split_message
 
 
 def _digest(markdown: str) -> DigestResult:
@@ -310,3 +312,11 @@ def test_a_theme_cut_across_parts_still_yields_valid_html():
     for part in parts:
         assert part.count("<blockquote expandable>") == part.count("</blockquote>")
         assert len(part) <= 300
+
+
+def test_the_plain_title_matches_the_rendered_header():
+    # The archive recognises a published Digest by this title (ADR-0003).
+    title = digest_title(date(2026, 7, 4))
+    assert title == "🗓 Дайджест чатов по маркировке за 04.07.2026"
+    [part] = render_parts(_digest("Итоги"))
+    assert part.startswith("🗓 <b>Дайджест чатов по маркировке за 04.07.2026</b>")

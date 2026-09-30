@@ -95,6 +95,46 @@ def test_hashtags_outside_the_fixed_set_are_removed_from_the_digest(tmp_path):
     assert result.markdown == "✅ **Тема** (Молоко) #молоко [[m1]]\nпункт #1 и ## не тег"
 
 
+def test_the_previous_digest_reaches_the_model_as_labelled_reference(tmp_path):
+    captured = {}
+
+    def fake_post(url, headers, payload):
+        captured.update(payload=payload)
+        return _ok_response()
+
+    generate_digest(
+        [_addressed(1)], _prompt(tmp_path), "2026-07-04",
+        providers=(_provider(),),
+        previous_digest="🗓 Дайджест за 03.07.2026\n\nВчерашняя тема.",
+        post=fake_post,
+    )
+
+    content = captured["payload"]["messages"][1]["content"]
+    reference, discussion = content.split("# Сообщения за день")
+    assert "# Справка: вчерашний дайджест" in reference
+    assert "Вчерашняя тема." in reference
+    assert "Вчерашняя тема." not in discussion
+    assert "[m1 · 13:00] **ivan**: привет" in discussion
+
+
+def test_without_a_previous_digest_the_input_is_only_the_discussion(tmp_path):
+    captured = {}
+
+    def fake_post(url, headers, payload):
+        captured.update(payload=payload)
+        return _ok_response()
+
+    generate_digest(
+        [_addressed(1)], _prompt(tmp_path), "2026-07-04",
+        providers=(_provider(),),
+        post=fake_post,
+    )
+
+    content = captured["payload"]["messages"][1]["content"]
+    assert "Справка" not in content
+    assert content == prepare_messages_markdown([_addressed(1)])
+
+
 def _reply(message_id, reply_to, hour, sender="petr"):
     return TelegramMessage(
         -1001359438834, "Маркировка. Молоко", sender, "ответ",

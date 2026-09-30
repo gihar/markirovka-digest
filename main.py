@@ -5,13 +5,14 @@ no Telegram ingestion and no asyncio. Runs once (Railway Cron) and exits.
 """
 
 import logging
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 from typing import Callable
 
 from analyzer import generate_digest
 from config import Config, load_config
-from db import connect, fetch_digest_messages
+from db import connect, fetch_channel_posts, fetch_digest_messages
+from digest_archive import published_digest
 from models import DigestResult, TelegramMessage
 from publisher import alert_degraded, alert_failure, publish
 from window import previous_msk_day
@@ -64,6 +65,22 @@ def run_and_alert_on_failure(
         raise
 
 
+def _previous_digest(conn, chat_ids: list[int], day: date, config: Config) -> str | None:
+    """The Digest published for the day before ``day``, if there is one.
+
+    Reference context only (ADR-0003). It was published on ``day`` itself, or
+    later on a rerun, so posts from the day before on are enough to search.
+    """
+    yesterday = day - timedelta(days=1)
+    posts = fetch_channel_posts(
+        conn, chat_ids, since=yesterday, digest_channel_id=config.digest_channel_id
+    )
+    previous = published_digest(posts, yesterday)
+    if previous is None:
+        logger.info("No published Digest for %s — generating without it", yesterday)
+    return previous
+
+
 def _digest_once(day: date, config: Config) -> int | None:
     """Open the Message Store, run the pipeline for ``day``, close it again."""
     chat_ids = [c.chat_id for c in config.channels]
@@ -86,6 +103,7 @@ def _digest_once(day: date, config: Config) -> int | None:
                 date_str,
                 providers=config.llm_providers,
                 chat_hashtags=chat_hashtags,
+                previous_digest=_previous_digest(conn, chat_ids, day, config),
             ),
             publish_digest=lambda digest: publish(digest, config),
             report_digest=lambda digest: alert_degraded(day, digest, config),

@@ -18,8 +18,10 @@ TELEGRAM_LIMIT: int = 4096
 
 # Prefix marking every part after the first as a continuation of the digest,
 # so readers of a split digest know parts 2+ are not a fresh message. Rendered
-# to <i>(продолжение)</i> followed by a blank line.
-_CONTINUATION_MARKER: str = "*(продолжение)*\n\n"
+# to <i>(продолжение)</i> followed by a blank line. As published, a part reads
+# CONTINUATION_TEXT first — which is how the archive rejoins parts (ADR-0003).
+CONTINUATION_TEXT: str = "(продолжение)"
+_CONTINUATION_MARKER: str = f"*{CONTINUATION_TEXT}*\n\n"
 
 
 # A message reference the model cites, e.g. "[[m12]]" — with the space before
@@ -183,14 +185,26 @@ def _fold_themes(html_text: str) -> str:
     return "\n".join(out)
 
 
+def _title_text(day: date) -> str:
+    return f"Дайджест чатов по маркировке за {day.strftime('%d.%m.%Y')}"
+
+
+def digest_title(day: date) -> str:
+    """The Digest's title line as readers see it — plain text, no markup.
+
+    The archive recognises a published Digest by it (ADR-0003), so it and the
+    rendered header below come from one place.
+    """
+    return f"🗓 {_title_text(day)}"
+
+
 def _dated_header(date_str: str) -> str:
     """A bold, human-friendly digest title from an ISO date (→ DD.MM.YYYY).
 
     Injected by us — the single title of the message — rather than trusting the
     model to state the covered day (the prompt forbids the model its own title).
     """
-    day = date.fromisoformat(date_str)
-    return f"🗓 **Дайджест чатов по маркировке за {day.strftime('%d.%m.%Y')}**"
+    return f"🗓 **{_title_text(date.fromisoformat(date_str))}**"
 
 
 def _plural(n: int, one: str, few: str, many: str) -> str:

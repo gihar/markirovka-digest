@@ -165,6 +165,26 @@ def _keep_known_hashtags(markdown: str, allowed: frozenset[str]) -> str:
     )
 
 
+# Headings of the model's input when a Previous Digest is given (ADR-0003): the
+# reference block and the discussion are kept visibly apart.
+_REFERENCE_HEADING: str = (
+    "# Справка: вчерашний дайджест\n"
+    "(только для связи с прошлым днём — не пересказывай, темы бери только "
+    "из сообщений ниже)"
+)
+_DISCUSSION_HEADING: str = "# Сообщения за день"
+
+
+def _model_input(messages_md: str, previous_digest: str | None) -> str:
+    """The user message: the day's discussion, after the reference if any."""
+    if not previous_digest:
+        return messages_md
+    return (
+        f"{_REFERENCE_HEADING}\n\n{previous_digest.strip()}\n\n"
+        f"{_DISCUSSION_HEADING}\n\n{messages_md}"
+    )
+
+
 def _error_body(exc: httpx.HTTPError) -> str:
     """The provider's own explanation for a failed request, if it sent one.
 
@@ -311,6 +331,7 @@ def generate_digest(
     *,
     providers: tuple[LlmProvider, ...],
     chat_hashtags: Mapping[int, str] | None = None,
+    previous_digest: str | None = None,
     post: Callable[[str, dict, dict], dict] = _http_post,
 ) -> DigestResult:
     """Generate a digest from messages via an OpenAI-compatible LLM.
@@ -322,6 +343,8 @@ def generate_digest(
         providers: LLM providers to try, in order — the primary first.
         chat_hashtags: Chat id -> industry hashtag; the only hashtags the
             digest may carry.
+        previous_digest: The Digest of the day before, as published; reference
+            context for continuity only (ADR-0003). None when there is none.
         post: Injectable transport seam (url, headers, payload) -> response dict.
 
     Raises:
@@ -351,7 +374,7 @@ def generate_digest(
         )
 
     answer = _digest_from_first_working_provider(
-        providers, prompt_text, messages_md, post
+        providers, prompt_text, _model_input(messages_md, previous_digest), post
     )
 
     return DigestResult(

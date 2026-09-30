@@ -55,3 +55,12 @@ to a Digest.** Without it the Digest summarises yesterday's Digest, and its
 topics reproduce themselves indefinitely. The exclusion covers the whole
 channel, not just Digests — everything it carries is broadcast, not
 conversation, and a Digest summarises conversation.
+
+One narrow exception, for the **Previous Digest** only (ADR-0003): it may reach
+the model as separately labelled reference context, never as conversation.
+
+### Previous Digest
+The Digest covering the day before the Digest Window, read back from the
+Message Store (its forwarded Digest Channel post). Reference context only: it
+lets a Digest mark a theme as continuing (🔁) and link today's answer to
+yesterday's question, but a Digest never retells it and takes no theme from it.
