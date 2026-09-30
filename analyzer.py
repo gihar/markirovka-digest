@@ -154,7 +154,7 @@ def prepare_messages_markdown(
 _HASHTAG_WORD = re.compile(r"( ?)(?<![^\s])(#[^\W\d_]\w*)", re.MULTILINE)
 
 
-def _keep_known_hashtags(markdown: str, allowed: frozenset[str]) -> str:
+def keep_known_hashtags(markdown: str, allowed: frozenset[str]) -> str:
     """Drop every hashtag outside the configured set from the model's output.
 
     The set is closed so tags stay stable from day to day and channel search
@@ -283,7 +283,7 @@ def _request_digest(
 
 
 @dataclass(frozen=True)
-class _LlmAnswer:
+class LlmAnswer:
     """What the provider chain produced: the digest, and what it cost to get."""
 
     markdown: str
@@ -291,12 +291,12 @@ class _LlmAnswer:
     skipped: tuple[str, ...]  # "[model] reason" per provider that failed first
 
 
-def _digest_from_first_working_provider(
+def answer_from_first_working_provider(
     providers: tuple[LlmProvider, ...],
     prompt_text: str,
     messages_md: str,
     post: Callable[[str, dict, dict], dict],
-) -> _LlmAnswer:
+) -> LlmAnswer:
     """Return the digest from the first provider that answers.
 
     Providers are tried in order, so a provider outage costs the digest's
@@ -319,9 +319,27 @@ def _digest_from_first_working_provider(
             failures.append(f"[{provider.model}] {exc}")
             last_error = exc
             continue
-        return _LlmAnswer(digest_markdown, provider.model, tuple(failures))
+        return LlmAnswer(digest_markdown, provider.model, tuple(failures))
 
     raise LlmError("Every LLM provider failed: " + "; ".join(failures)) from last_error
+
+
+def complete(
+    providers: tuple[LlmProvider, ...],
+    prompt_path: Path,
+    user_input: str,
+    post: Callable[[str, dict, dict], dict] | None = None,
+) -> LlmAnswer:
+    """Answer ``user_input`` under the prompt at ``prompt_path``, via the chain.
+
+    The shared entry for anything else the service asks the LLM (the weekly
+    review): same providers, same fallback, same truncation guard.
+    """
+    if not providers:
+        raise ValueError("complete needs at least one LLM provider")
+    return answer_from_first_working_provider(
+        providers, _load_prompt(prompt_path), user_input, post or _http_post
+    )
 
 
 def generate_digest(
@@ -373,13 +391,13 @@ def generate_digest(
             provider_failures=(),
         )
 
-    answer = _digest_from_first_working_provider(
+    answer = answer_from_first_working_provider(
         providers, prompt_text, _model_input(messages_md, previous_digest), post
     )
 
     return DigestResult(
         date=date,
-        markdown=_keep_known_hashtags(answer.markdown, frozenset(hashtags.values())),
+        markdown=keep_known_hashtags(answer.markdown, frozenset(hashtags.values())),
         message_count=len(messages),
         chat_count=len({m.chat_title for m in messages}),
         # Rough character-based estimate — no portable token counter across

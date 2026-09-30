@@ -249,34 +249,47 @@ def _strip_horizontal_rules(md: str) -> str:
 def render_parts(digest: DigestResult, limit: int = TELEGRAM_LIMIT) -> list[str]:
     """Render a Digest to ready-to-send Telegram HTML message parts.
 
-    Prepends a dated header (which day this digest covers) and the day's
-    activity line to the body, strips horizontal-rule lines, then splits the
-    raw markdown — sizing each chunk by its rendered HTML length — and converts
-    each chunk to HTML independently, folding theme bodies (_fold_themes).
-    The header lands on the first part only. Splitting on the raw source
-    guarantees a split never severs an HTML tag or entity, so every part is
-    valid under parse_mode=HTML. (In the rare case an oversized single line is
-    hard-split mid-``**bold**``, the orphaned markers render as literal
-    asterisks — content is preserved either way.)
+    Heads it with the dated header (which day this digest covers) and the day's
+    activity line; see render_titled_parts for the rest.
+    """
+    title = "\n".join(
+        line for line in (_dated_header(digest.date), _activity_line(digest)) if line
+    )
+    return render_titled_parts(title, digest.markdown, digest.links, limit)
 
-    When the digest spans more than one message, every part after the first is
+
+def render_titled_parts(
+    title: str,
+    markdown: str,
+    links: Mapping[str, str] | None = None,
+    limit: int = TELEGRAM_LIMIT,
+) -> list[str]:
+    """Render ``title`` over ``markdown`` as Telegram HTML message parts.
+
+    Strips horizontal-rule lines, then splits the raw markdown — sizing each
+    chunk by its rendered HTML length — and converts each chunk to HTML
+    independently, folding theme bodies (_fold_themes). The title lands on the
+    first part only. Splitting on the raw source guarantees a split never
+    severs an HTML tag or entity, so every part is valid under parse_mode=HTML.
+    (In the rare case an oversized single line is hard-split mid-``**bold**``,
+    the orphaned markers render as literal asterisks — content is preserved
+    either way.)
+
+    When the text spans more than one message, every part after the first is
     prefixed with a continuation marker. The marker's rendered length is
     reserved during splitting (parts are sized to ``limit`` minus the marker),
-    so a part plus its marker never exceeds the limit. A digest that fits in a
+    so a part plus its marker never exceeds the limit. Text that fits in a
     single message gets no marker and is unchanged.
     """
     def to_html(chunk: str) -> str:
-        return _fold_themes(markdown_to_telegram_html(chunk, digest.links))
+        return _fold_themes(markdown_to_telegram_html(chunk, links))
 
     def html_len(chunk: str) -> int:
         return len(to_html(chunk))
 
-    title = "\n".join(
-        line for line in (_dated_header(digest.date), _activity_line(digest)) if line
-    )
-    body = f"{title}\n\n{_strip_horizontal_rules(digest.markdown)}"
+    body = f"{title}\n\n{_strip_horizontal_rules(markdown)}"
 
-    # A digest that fits whole stays a single, marker-free message.
+    # Text that fits whole stays a single, marker-free message.
     if html_len(body) <= limit:
         return [to_html(body)]
 

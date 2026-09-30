@@ -9,7 +9,7 @@ The prompt is loaded exactly as production does (``config.PROMPT_PATH`` through
 import re
 
 from analyzer import _load_prompt
-from config import PROMPT_PATH
+from config import PROMPT_PATH, WEEKLY_PROMPT_PATH
 
 
 def _prompt() -> str:
@@ -124,3 +124,13 @@ def test_previous_digest_is_reference_only():
 
     assert "Справка: вчерашний дайджест" in prompt
     assert "не пересказывай" in prompt
+
+
+def test_weekly_prompt_covers_trends_top_themes_and_open_questions():
+    prompt = _load_prompt(WEEKLY_PROMPT_PATH)
+
+    assert "Тренды" in prompt
+    assert "Топ-3" in prompt
+    assert "без ответа" in prompt
+    assert "не используй таблицы" in prompt
+    assert "Не добавляй собственный заголовок" in prompt

@@ -59,5 +59,9 @@ to be re-leaked every single day to persist.
 
 - The Digest title line is now a contract: renaming it breaks the lookup until
   the lookup's title is changed in step (both come from one function).
-- A weekly review built from the week's Digests (#20) reads the same way and is
-  covered by the same exception.
+- The weekly review (`weekly.py`) reads the week's Digests the same way. Unlike
+  the daily Digest it *does* take its material from them — a review of
+  Digests is its whole purpose — so for it they are input, not reference. The
+  loop still cannot form: the review carries its own title ("📊 Обзор недели…"),
+  which the Digest lookup never matches, so neither the daily Digest nor the
+  next review ever reads a review back.

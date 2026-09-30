@@ -5,7 +5,13 @@ import pytest
 from models import DigestResult
 from datetime import date
 
-from render import digest_title, markdown_to_telegram_html, render_parts, split_message
+from render import (
+    digest_title,
+    markdown_to_telegram_html,
+    render_parts,
+    render_titled_parts,
+    split_message,
+)
 
 
 def _digest(markdown: str) -> DigestResult:
@@ -320,3 +326,11 @@ def test_the_plain_title_matches_the_rendered_header():
     assert title == "🗓 Дайджест чатов по маркировке за 04.07.2026"
     [part] = render_parts(_digest("Итоги"))
     assert part.startswith("🗓 <b>Дайджест чатов по маркировке за 04.07.2026</b>")
+
+
+def test_any_title_can_head_the_rendered_parts():
+    [part] = render_titled_parts("📊 **Обзор недели**", "✅ **Тема**\nСуть.")
+    assert part == (
+        "📊 <b>Обзор недели</b>\n\n✅ <b>Тема</b>\n"
+        "<blockquote expandable>Суть.</blockquote>"
+    )

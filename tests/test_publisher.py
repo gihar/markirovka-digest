@@ -365,3 +365,21 @@ def test_alert_does_not_escape_quotes():
     text = calls[0]["text"]
     assert '{"error":{"message":"Key limit exceeded"}}' in text
     assert "&quot;" not in text
+
+
+def test_an_alert_can_name_what_was_not_published():
+    text = render_alert(
+        date(2026, 10, 1), RuntimeError("boom"),
+        subject="Обзор недели 25.09–01.10.2026",
+    )
+    assert text.startswith("⚠️ <b>Обзор недели 25.09–01.10.2026 не опубликован</b>")
+
+
+def test_a_degraded_alert_can_name_what_was_published():
+    digest = DigestResult(**{**_digest("x").__dict__, "model": "qwen"})
+    text = render_degraded_alert(
+        date(2026, 10, 1), digest, subject="Обзор недели 25.09–01.10.2026"
+    )
+    assert text.startswith(
+        "🟡 <b>Обзор недели 25.09–01.10.2026 опубликован на запасном провайдере</b>"
+    )

@@ -28,8 +28,19 @@ Domain vocabulary is in [`CONTEXT.md`](CONTEXT.md).
 1. Compute the **Digest Window**: the previous calendar day in `Europe/Moscow`.
 2. Read messages for that day across the allow-listed chats from the Message Store.
 3. If there are none, log and exit (nothing is posted on a quiet day).
-4. Otherwise generate the digest via the LLM and post it to the Telegram channel,
-   splitting into several messages if it exceeds Telegram's 4096-char limit.
+4. Otherwise read back the **Previous Digest** (the one published for the day
+   before, [ADR-0003](docs/adr/0003-previous-digest-as-reference.md)) as
+   reference context, generate the digest via the LLM and post it to the
+   Telegram channel, splitting into several messages if it exceeds Telegram's
+   4096-char limit. Each theme links to its discussion and folds under its
+   heading.
+
+### Weekly review (`weekly.py`, Fridays)
+
+Reads the Digests published over the seven days ending yesterday back from the
+Message Store and posts one review: trends, the week's top three themes, and
+questions left open. Prompt: [`prompts/weekly.md`](prompts/weekly.md). A week
+without a single published Digest posts nothing.
 
 | Module | Responsibility |
 |--------|----------------|
@@ -39,7 +50,9 @@ Domain vocabulary is in [`CONTEXT.md`](CONTEXT.md).
 | `analyzer.py` | Format messages, call the LLM (OpenAI-compatible) |
 | `links.py` | t.me addresses of Monitored Chat messages |
 | `render.py` | Markdown → Telegram HTML, header, message splitting |
+| `digest_archive.py` | Recognise a published Digest among Digest Channel posts |
 | `publisher.py` | Telegram-only delivery and alerts |
+| `weekly.py` | Weekly review entry point |
 | `main.py` | Orchestration |
 
 ## Configuration
@@ -104,3 +117,15 @@ PostgreSQL, so it reaches the database over the private network.
 The process runs to completion and exits; the restart policy is `NEVER` so a
 finished (or failed) run is not restarted until the next scheduled tick — a
 missed day is simply skipped (no self-healing, by design).
+
+### Weekly review service
+
+A second cron service from the same repo, with the same environment variables:
+
+1. Create another service from this repo in the same project.
+2. In its **Settings → Config-as-code**, point the Railway config file at
+   [`railway.weekly.json`](railway.weekly.json): start command
+   `python weekly.py`, cron `0 7 * * 5` (Fridays 10:00 MSK — an hour after the
+   daily run, so Thursday's Digest is already published).
+3. Copy the variables of the daily service (or share them via a Railway
+   shared variable group).

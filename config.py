@@ -18,6 +18,7 @@ from models import ChannelConfig, LlmProvider
 # Project root is the directory containing this file
 PROJECT_ROOT: Path = Path(__file__).resolve().parent
 PROMPT_PATH: Path = PROJECT_ROOT / "prompts" / "digest.md"
+WEEKLY_PROMPT_PATH: Path = PROJECT_ROOT / "prompts" / "weekly.md"
 CHANNELS_PATH: Path = PROJECT_ROOT / "channels.toml"
 
 # Required environment variables — the pipeline cannot run without these.

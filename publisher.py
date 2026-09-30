@@ -147,14 +147,21 @@ def _clip_html(text: str, limit: int) -> str:
     return cut + _CLIP_MARK
 
 
-def render_alert(day: date, error: BaseException) -> str:
+def _default_subject(day: date) -> str:
+    return f"Дайджест за {day.strftime('%d.%m.%Y')}"
+
+
+def render_alert(
+    day: date, error: BaseException, *, subject: str | None = None
+) -> str:
     """Render a failed run as one short Telegram message.
 
-    Names the covered day and the exception, and stays within a single message:
+    Names what was not published (``subject``; the Digest for ``day`` unless
+    given) and the exception, and stays within a single message:
     an alert that had to be split, or that overran the limit and was rejected,
     is an alert that does not arrive.
     """
-    header = f"⚠️ <b>Дайджест за {day.strftime('%d.%m.%Y')} не опубликован</b>\n\n"
+    header = f"⚠️ <b>{subject or _default_subject(day)} не опубликован</b>\n\n"
     reason = str(error) or error.__class__.__name__
     # Everything below the header comes from an exception, so it is
     # accident-shaped text: an LlmError carries the provider's response body,
@@ -173,6 +180,7 @@ def alert_failure(
     error: BaseException,
     config: Config,
     *,
+    subject: str | None = None,
     post=_http_post,
     sleep: Callable[[float], None] = time.sleep,
 ) -> None:
@@ -192,7 +200,7 @@ def alert_failure(
 
     try:
         send_parts(
-            [render_alert(day, error)],
+            [render_alert(day, error, subject=subject)],
             config.telegram_bot_token,
             config.telegram_alert_chat_id,
             post=post,
@@ -207,7 +215,9 @@ def alert_failure(
         )
 
 
-def render_degraded_alert(day: date, digest: DigestResult) -> str:
+def render_degraded_alert(
+    day: date, digest: DigestResult, *, subject: str | None = None
+) -> str:
     """Render a fallback-served run as one short Telegram message.
 
     Deliberately unlike the failure alert: that one means no digest came out at
@@ -215,7 +225,7 @@ def render_degraded_alert(day: date, digest: DigestResult) -> str:
     two call for different reactions.
     """
     header = (
-        f"🟡 <b>Дайджест за {day.strftime('%d.%m.%Y')} "
+        f"🟡 <b>{subject or _default_subject(day)} "
         f"опубликован на запасном провайдере</b>\n\n"
     )
     body = f"Модель: {digest.model}\n"
@@ -234,6 +244,7 @@ def alert_degraded(
     digest: DigestResult,
     config: Config,
     *,
+    subject: str | None = None,
     post=_http_post,
     sleep: Callable[[float], None] = time.sleep,
 ) -> None:
@@ -261,7 +272,7 @@ def alert_degraded(
 
     try:
         send_parts(
-            [render_degraded_alert(day, digest)],
+            [render_degraded_alert(day, digest, subject=subject)],
             config.telegram_bot_token,
             config.telegram_alert_chat_id,
             post=post,

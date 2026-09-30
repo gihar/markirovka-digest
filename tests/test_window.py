@@ -3,7 +3,7 @@
 from datetime import UTC, date, datetime
 from zoneinfo import ZoneInfo
 
-from window import previous_msk_day
+from window import previous_msk_day, previous_msk_week
 
 MSK = ZoneInfo("Europe/Moscow")
 
@@ -34,3 +34,9 @@ def test_production_passes_utc_cron_time():
     # main.py passes datetime.now(tz=UTC); 06:00 UTC == 09:00 MSK.
     now = datetime(2026, 7, 5, 6, 0, tzinfo=UTC)
     assert previous_msk_day(now) == date(2026, 7, 4)
+
+
+def test_the_week_is_the_seven_days_ending_yesterday():
+    # Friday 2026-10-02 10:00 MSK — the weekly cron run.
+    now = datetime(2026, 10, 2, 10, 0, tzinfo=MSK)
+    assert previous_msk_week(now) == (date(2026, 9, 25), date(2026, 10, 1))
