@@ -36,6 +36,9 @@ class ChannelConfig:
     """
 
     chat_id: int
+    # Industry hashtag (e.g. "#молоко") the Digest tags this chat's themes
+    # with; None for a chat that spans industries.
+    hashtag: str | None = None
 
 
 @dataclass(frozen=True)

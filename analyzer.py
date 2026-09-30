@@ -7,6 +7,8 @@ producing no digest.
 """
 
 import logging
+import re
+from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import datetime
 from itertools import groupby
@@ -109,15 +111,21 @@ def message_links(messages: list[TelegramMessage]) -> dict[str, str]:
     return links
 
 
-def prepare_messages_markdown(messages: list[TelegramMessage]) -> str:
+def prepare_messages_markdown(
+    messages: list[TelegramMessage],
+    chat_hashtags: Mapping[int, str] | None = None,
+) -> str:
     """Group messages by chat and format as markdown for the LLM.
 
     Returns a markdown string with chat headers and referenced, timestamped
-    messages.
+    messages. ``chat_hashtags`` (chat id -> industry hashtag) are listed up
+    front — the closed set the model may tag themes with — and next to the
+    header of each chat that has one.
     """
     if not messages:
         return ""
 
+    hashtags = chat_hashtags or {}
     referenced = _referenced(messages)
     by_address = {
         (msg.chat_id, msg.message_id): (ref, msg)
@@ -126,13 +134,35 @@ def prepare_messages_markdown(messages: list[TelegramMessage]) -> str:
     }
 
     sections: list[str] = []
+    if hashtags:
+        sections.append("Хэштеги отраслей: " + ", ".join(dict.fromkeys(hashtags.values())))
     for chat_title, chat_messages in groupby(referenced, key=lambda r: r[1].chat_title):
-        lines = [f"## {chat_title}", ""]
+        chat_messages = list(chat_messages)
+        hashtag = hashtags.get(chat_messages[0][1].chat_id)
+        header = f"## {chat_title} · {hashtag}" if hashtag else f"## {chat_title}"
+        lines = [header, ""]
         for ref, msg in chat_messages:
             lines.append(_format_message(ref, msg, _reply_mark(msg, by_address)))
         sections.append("\n".join(lines))
 
     return "\n\n".join(sections)
+
+
+# A hashtag standing as its own word, with the one space before it (so removing
+# it leaves no double space). A letter must follow "#": "#1" and markdown "##"
+# headers are not hashtags.
+_HASHTAG_WORD = re.compile(r"( ?)(?<![^\s])(#[^\W\d_]\w*)", re.MULTILINE)
+
+
+def _keep_known_hashtags(markdown: str, allowed: frozenset[str]) -> str:
+    """Drop every hashtag outside the configured set from the model's output.
+
+    The set is closed so tags stay stable from day to day and channel search
+    finds every theme of a product group under one tag.
+    """
+    return _HASHTAG_WORD.sub(
+        lambda m: m.group(0) if m.group(2) in allowed else "", markdown
+    )
 
 
 def _error_body(exc: httpx.HTTPError) -> str:
@@ -280,6 +310,7 @@ def generate_digest(
     date: str | None = None,
     *,
     providers: tuple[LlmProvider, ...],
+    chat_hashtags: Mapping[int, str] | None = None,
     post: Callable[[str, dict, dict], dict] = _http_post,
 ) -> DigestResult:
     """Generate a digest from messages via an OpenAI-compatible LLM.
@@ -289,6 +320,8 @@ def generate_digest(
         prompt_path: Path to the system prompt markdown file.
         date: Digest date (YYYY-MM-DD) — the covered MSK day. Defaults to today.
         providers: LLM providers to try, in order — the primary first.
+        chat_hashtags: Chat id -> industry hashtag; the only hashtags the
+            digest may carry.
         post: Injectable transport seam (url, headers, payload) -> response dict.
 
     Raises:
@@ -303,7 +336,8 @@ def generate_digest(
         date = datetime.now().strftime("%Y-%m-%d")
 
     prompt_text = _load_prompt(prompt_path)
-    messages_md = prepare_messages_markdown(messages)
+    hashtags = chat_hashtags or {}
+    messages_md = prepare_messages_markdown(messages, hashtags)
 
     if not messages_md:
         return DigestResult(
@@ -322,7 +356,7 @@ def generate_digest(
 
     return DigestResult(
         date=date,
-        markdown=answer.markdown,
+        markdown=_keep_known_hashtags(answer.markdown, frozenset(hashtags.values())),
         message_count=len(messages),
         chat_count=len({m.chat_title for m in messages}),
         # Rough character-based estimate — no portable token counter across

@@ -67,6 +67,7 @@ def run_and_alert_on_failure(
 def _digest_once(day: date, config: Config) -> int | None:
     """Open the Message Store, run the pipeline for ``day``, close it again."""
     chat_ids = [c.chat_id for c in config.channels]
+    chat_hashtags = {c.chat_id: c.hashtag for c in config.channels if c.hashtag}
     conn = connect(config.database_url)
     try:
         return run_pipeline(
@@ -84,6 +85,7 @@ def _digest_once(day: date, config: Config) -> int | None:
                 prompt_path,
                 date_str,
                 providers=config.llm_providers,
+                chat_hashtags=chat_hashtags,
             ),
             publish_digest=lambda digest: publish(digest, config),
             report_digest=lambda digest: alert_degraded(day, digest, config),

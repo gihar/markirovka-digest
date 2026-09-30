@@ -42,6 +42,31 @@ def test_empty_allow_list_is_rejected(tmp_path):
         _load_channels(path)
 
 
+def test_a_channel_may_carry_an_industry_hashtag(tmp_path):
+    path = _write_channels(
+        tmp_path,
+        '[[channels]]\nchat_id = -1001\nhashtag = "#молоко"\n\n'
+        "[[channels]]\nchat_id = -1002\n",
+    )
+    channels, _ = _load_channels(path)
+    assert [c.hashtag for c in channels] == ["#молоко", None]
+
+
+@pytest.mark.parametrize("raw", ['"молоко"', '"#"', '"#мол око"', '"#1молоко"', "5"])
+def test_a_malformed_hashtag_is_rejected(tmp_path, raw):
+    path = _write_channels(tmp_path, f"[[channels]]\nchat_id = -1001\nhashtag = {raw}\n")
+    with pytest.raises(ValueError, match="hashtag"):
+        _load_channels(path)
+
+
+def test_shipped_channels_toml_tags_the_industry_chats():
+    channels, _ = _load_channels(CHANNELS_PATH)
+    tags = {c.chat_id: c.hashtag for c in channels}
+    assert tags[-1001359438834] == "#молоко"
+    assert tags[-1001329208283] == "#легпром"
+    assert tags[-1002202471035] == "#электроника"
+
+
 _ALL_ENV = {
     "DATABASE_URL": "postgresql://u:p@host:5432/db",
     "LLM_BASE_URL": "https://openrouter.ai/api/v1",

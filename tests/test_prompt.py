@@ -103,3 +103,10 @@ def test_reply_threads_inform_status_and_grouping():
     prompt = _prompt()
 
     assert "↳" in prompt
+
+
+def test_theme_heading_carries_industry_hashtags_from_the_input():
+    prompt = _prompt()
+
+    assert "Хэштеги" in prompt
+    assert "#молоко" in prompt

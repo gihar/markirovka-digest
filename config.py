@@ -8,6 +8,7 @@ DATABASE_URL but no Telegram user session and no GitHub credentials.
 """
 
 import os
+import re
 import tomllib
 from dataclasses import dataclass
 from pathlib import Path
@@ -67,11 +68,28 @@ class Config:
         return self.llm_providers[0].model
 
 
+# A Telegram hashtag: "#", a letter, then letters, digits or underscores.
+# Telegram does not make "#1" or "#мол око" clickable as one tag.
+_HASHTAG = re.compile(r"#[^\W\d_]\w*")
+
+
+def _hashtag(raw: object, i: int, path: Path) -> str | None:
+    """Validate a channel's optional industry hashtag."""
+    if raw is None:
+        return None
+    if not isinstance(raw, str) or not _HASHTAG.fullmatch(raw):
+        raise ValueError(
+            f"Channel entry {i} in {path}: 'hashtag' must look like \"#молоко\", "
+            f"got {raw!r}"
+        )
+    return raw
+
+
 def _load_channels(path: Path) -> tuple[tuple[ChannelConfig, ...], dict]:
     """Parse channels.toml and return (allow-list, settings).
 
-    Each [[channels]] entry needs only a chat_id; the title lives in the
-    Message Store. Any 'title' in the file is treated as a human-facing comment
+    Each [[channels]] entry needs a chat_id and may carry an industry hashtag;
+    the title lives in the Message Store. Any 'title' in the file is treated as a human-facing comment
     and ignored.
     """
     if not path.exists():
@@ -91,7 +109,12 @@ def _load_channels(path: Path) -> tuple[tuple[ChannelConfig, ...], dict]:
         chat_id = ch.get("chat_id")
         if chat_id is None:
             raise ValueError(f"Channel entry {i} in {path} missing 'chat_id'")
-        channels.append(ChannelConfig(chat_id=int(chat_id)))
+        channels.append(
+            ChannelConfig(
+                chat_id=int(chat_id),
+                hashtag=_hashtag(ch.get("hashtag"), i, path),
+            )
+        )
 
     return tuple(channels), settings
 

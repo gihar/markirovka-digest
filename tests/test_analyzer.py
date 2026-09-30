@@ -68,6 +68,33 @@ def test_every_message_gets_a_reference_the_model_can_cite():
     assert "[m2 · 14:00] **ivan**: привет" in md
 
 
+def test_a_chat_header_names_its_industry_hashtag():
+    md = prepare_messages_markdown(
+        [_addressed(1)], chat_hashtags={-1001359438834: "#молоко"}
+    )
+
+    assert "## Маркировка. Молоко · #молоко" in md
+
+
+def test_a_chat_without_a_hashtag_keeps_a_bare_header():
+    md = prepare_messages_markdown([_addressed(1)], chat_hashtags={})
+
+    assert "## Маркировка. Молоко\n" in md
+
+
+def test_hashtags_outside_the_fixed_set_are_removed_from_the_digest(tmp_path):
+    result = generate_digest(
+        [_addressed(1)], _prompt(tmp_path), "2026-07-04",
+        providers=(_provider(),),
+        chat_hashtags={-1001359438834: "#молоко"},
+        post=lambda *_: _ok_response(
+            "✅ **Тема** (Молоко) #молоко #сыр [[m1]]\nпункт #1 и ## не тег"
+        ),
+    )
+
+    assert result.markdown == "✅ **Тема** (Молоко) #молоко [[m1]]\nпункт #1 и ## не тег"
+
+
 def _reply(message_id, reply_to, hour, sender="petr"):
     return TelegramMessage(
         -1001359438834, "Маркировка. Молоко", sender, "ответ",

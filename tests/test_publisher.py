@@ -131,6 +131,12 @@ def test_render_parts_links_references_from_the_digest():
     assert '<a href="https://t.me/c/1/2">→ обсуждение</a>' in part
 
 
+def test_a_theme_heading_keeps_its_hashtags_as_plain_text():
+    # Telegram makes a bare "#молоко" clickable by itself; no markup needed.
+    out = markdown_to_telegram_html("✅ **Тема** (Молоко) #молоко #легпром")
+    assert out == "✅ <b>Тема</b> (Молоко) #молоко #легпром"
+
+
 def test_render_parts_prepends_dated_header():
     parts = render_parts(_digest("**Итоги** дня"))
     assert parts[0].startswith("🗓 <b>Дайджест чатов по маркировке за 04.07.2026</b>")
