@@ -422,3 +422,18 @@ def test_http_post_connection_failure_raises_without_a_response(monkeypatch):
 
     with pytest.raises(LlmError, match="connection refused"):
         _post(monkeypatch, refuse)
+
+
+@pytest.mark.parametrize(
+    "text, expected",
+    [
+        ("a #молоко,#плохо x", "a #молоко, x"),
+        ("тема (#плохо)", "тема ()"),
+        ("**#плохо** и #молоко", "**** и #молоко"),
+        ("C# и ##Заголовок", "C# и ##Заголовок"),
+    ],
+)
+def test_unknown_hashtags_are_removed_even_next_to_punctuation(text, expected):
+    from analyzer import keep_known_hashtags
+
+    assert keep_known_hashtags(text, frozenset({"#молоко"})) == expected

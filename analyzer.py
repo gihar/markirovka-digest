@@ -148,10 +148,11 @@ def prepare_messages_markdown(
     return "\n\n".join(sections)
 
 
-# A hashtag standing as its own word, with the one space before it (so removing
-# it leaves no double space). A letter must follow "#": "#1" and markdown "##"
-# headers are not hashtags.
-_HASHTAG_WORD = re.compile(r"( ?)(?<![^\s])(#[^\W\d_]\w*)", re.MULTILINE)
+# A hashtag as Telegram sees one: "#" not glued to a preceding word character
+# (so "#тег" after a space, comma, bracket or "**" counts), then a letter —
+# "#1", "C#" and markdown "##" headers are not hashtags. The one space before it
+# is taken along, so removing it leaves no double space.
+_HASHTAG_WORD = re.compile(r"( ?)(?<![\w#])(#[^\W\d_]\w*)")
 
 
 def keep_known_hashtags(markdown: str, allowed: frozenset[str]) -> str:

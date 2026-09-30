@@ -158,8 +158,9 @@ _THEME_HEADING = re.compile(r"^\s*(✅|❓|🔁)")
 
 
 # A paragraph that ends the theme before it: the next theme, the quote of the
-# day, or a bold-led section line («Кратко», «Сроки», weekly section titles).
-_ENDS_THEME = re.compile(r"^\s*(✅|❓|🔁|💬|\*\*)")
+# day, a bold-led section line («Кратко», «Сроки», weekly section titles) or a
+# markdown heading.
+_ENDS_THEME = re.compile(r"^\s*(✅|❓|🔁|💬|\*\*|#)")
 
 
 def _tighten_themes(md: str) -> str:

@@ -24,20 +24,31 @@ class ChannelPost:
 def published_digest(posts: Sequence[ChannelPost], day: date) -> str | None:
     """The Digest covering ``day``, reassembled from ``posts``, or None.
 
-    ``posts`` are in publication order. The Digest starts at the post carrying
-    its title — the latest one, if a rerun published it twice — and continues
-    through the continuation parts that directly follow it in the same chat.
+    ``posts`` are in publication order. The Digest starts at a post carrying
+    its title and continues through the continuation parts that directly
+    follow it in the same chat. The title can appear more than once — a rerun
+    publishes it again, and a reader may forward part one into another chat —
+    so the most complete copy wins, and among equally complete ones the latest.
     Every other channel post (another day's Digest, third-party posts) is
     ignored.
     """
     title = digest_title(day)
-    starts = [i for i, post in enumerate(posts) if post.text.startswith(title)]
-    if not starts:
+    copies = [
+        _assemble(posts, i)
+        for i, post in enumerate(posts)
+        if post.text.startswith(title)
+    ]
+    if not copies:
         return None
+    # max() keeps the first of equals, so scan latest-first.
+    return max(reversed(copies), key=len)
 
-    first = posts[starts[-1]]
+
+def _assemble(posts: Sequence[ChannelPost], start: int) -> str:
+    """The Digest whose title post is ``posts[start]``, rejoined from its parts."""
+    first = posts[start]
     parts = [first.text]
-    for post in posts[starts[-1] + 1:]:
+    for post in posts[start + 1:]:
         if post.chat_id != first.chat_id:
             continue
         if not post.text.startswith(CONTINUATION_TEXT):

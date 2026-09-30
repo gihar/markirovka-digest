@@ -357,3 +357,9 @@ def test_blank_lines_inside_a_theme_do_not_stop_the_fold():
         "💬 <i>«цитата»</i> — ivan, Молоко\n\n"
         "<b>Кратко</b>: мелочь"
     ) in part
+
+
+def test_a_markdown_heading_ends_the_theme_before_it():
+    [part] = render_parts(_digest("✅ **Тема**\nСуть.\n\n### Кратко\n- мелочь"))
+    assert "<blockquote expandable>Суть.</blockquote>" in part
+    assert "<b>Кратко</b>\n- мелочь" in part

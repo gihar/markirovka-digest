@@ -67,3 +67,14 @@ def test_a_continuation_from_another_chat_is_not_joined():
 
 def test_no_posts_means_no_digest():
     assert published_digest([], DAY) is None
+
+
+def test_a_later_manual_forward_of_part_one_does_not_cut_the_digest():
+    # Someone forwards the channel's first post into another chat later on.
+    posts = [
+        _post(f"{TITLE}\n\nЧасть один."),
+        _post("(продолжение)\n\nЧасть два."),
+        _post(f"{TITLE}\n\nЧасть один.", chat_id=-1009),
+    ]
+
+    assert published_digest(posts, DAY) == f"{TITLE}\n\nЧасть один.\n\nЧасть два."
