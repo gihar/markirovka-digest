@@ -250,3 +250,63 @@ def test_oversized_bold_line_splits_without_malformed_tags():
     for p in parts:
         assert len(p) <= 120
         assert p.count("<") == p.count(">")  # no half-cut tag
+
+
+_THEME = "✅ **Тема {i}** (Молоко)\nСуть обсуждения {i}.\n👉 Что делать: действие {i}."
+
+
+def test_a_theme_body_folds_under_its_visible_heading():
+    [part] = render_parts(_digest(_THEME.format(i=1)))
+    assert (
+        "✅ <b>Тема 1</b> (Молоко)\n"
+        "<blockquote expandable>Суть обсуждения 1.\n👉 Что делать: действие 1.</blockquote>"
+    ) in part
+
+
+@pytest.mark.parametrize("status", ["✅", "❓", "🔁"])
+def test_every_status_heading_starts_a_folded_theme(status):
+    [part] = render_parts(_digest(f"{status} 🔥 **Тема**\nСуть."))
+    assert "<blockquote expandable>Суть.</blockquote>" in part
+
+
+def test_summary_deadlines_quote_and_kratko_stay_unfolded():
+    md = (
+        "День про сбои.\n\n"
+        "**📅 Сроки**\n- 01.10.2026 — старт\n\n"
+        + _THEME.format(i=1)
+        + "\n\n💬 *«цитата»* — ivan, Молоко\n\n**Кратко**: мелочь · ещё"
+    )
+    [part] = render_parts(_digest(md))
+    assert part.count("<blockquote") == 1
+    assert "День про сбои." in part.split("<blockquote")[0]
+    assert "<b>Кратко</b>" in part.split("</blockquote>")[1]
+    assert "- 01.10.2026 — старт" in part.split("<blockquote")[0]
+
+
+def test_a_heading_without_a_body_gets_no_empty_fold():
+    [part] = render_parts(_digest("✅ **Тема**\n\nДругой абзац."))
+    assert "<blockquote" not in part
+
+
+def test_a_split_digest_keeps_every_theme_whole_in_one_part():
+    md = "\n\n".join(_THEME.format(i=i) for i in range(40))
+    parts = render_parts(_digest(md), limit=400)
+
+    assert len(parts) > 1
+    for part in parts:
+        assert part.count("<blockquote expandable>") == part.count("</blockquote>")
+    for i in range(40):
+        [home] = [p for p in parts if f"<b>Тема {i}</b>" in p]
+        assert f"<blockquote expandable>Суть обсуждения {i}." in home
+        assert f"действие {i}.</blockquote>" in home
+
+
+def test_a_theme_cut_across_parts_still_yields_valid_html():
+    # A single theme longer than a part: its tail lands in the next part.
+    body = "\n".join(f"строка обсуждения {i}" for i in range(60))
+    parts = render_parts(_digest(f"✅ **Тема**\n{body}"), limit=300)
+
+    assert len(parts) > 1
+    for part in parts:
+        assert part.count("<blockquote expandable>") == part.count("</blockquote>")
+        assert len(part) <= 300

@@ -84,22 +84,10 @@ def _largest_prefix(line: str, limit: int, measure: Callable[[str], int]) -> int
     return best
 
 
-def split_message(
-    text: str,
-    limit: int = TELEGRAM_LIMIT,
-    *,
-    measure: Callable[[str], int] = len,
+def _split_lines(
+    text: str, limit: int, measure: Callable[[str], int]
 ) -> list[str]:
-    """Split text into parts each with ``measure(part) <= limit``, losslessly.
-
-    Splits on line boundaries; a single line still too long is hard-split.
-    ``measure`` lets callers size by the *rendered* length (e.g. HTML) while
-    splitting the raw source, so a split never lands inside a produced tag or
-    entity. No non-newline character is dropped or duplicated; order is kept.
-    """
-    if measure(text) <= limit:
-        return [text]
-
+    """Split on line boundaries; a single line still too long is hard-split."""
     parts: list[str] = []
     current = ""
     for line in text.split("\n"):
@@ -123,6 +111,76 @@ def split_message(
     if current:
         parts.append(current)
     return parts
+
+
+def split_message(
+    text: str,
+    limit: int = TELEGRAM_LIMIT,
+    *,
+    measure: Callable[[str], int] = len,
+) -> list[str]:
+    """Split text into parts each with ``measure(part) <= limit``, losslessly.
+
+    Splits between paragraphs (blank-line separated) first, so a theme block
+    stays whole in one part; only a paragraph too long for any part is split on
+    line boundaries, and a single line still too long is hard-split.
+    ``measure`` lets callers size by the *rendered* length (e.g. HTML) while
+    splitting the raw source, so a split never lands inside a produced tag or
+    entity. No non-newline character is dropped or duplicated; order is kept.
+    """
+    if measure(text) <= limit:
+        return [text]
+
+    parts: list[str] = []
+    current = ""
+    for paragraph in text.split("\n\n"):
+        candidate = paragraph if not current else f"{current}\n\n{paragraph}"
+        if measure(candidate) <= limit:
+            current = candidate
+            continue
+        if current:
+            parts.append(current)
+        if measure(paragraph) <= limit:
+            current = paragraph
+        else:
+            *whole, current = _split_lines(paragraph, limit, measure)
+            parts.extend(whole)
+
+    if current:
+        parts.append(current)
+    return parts
+
+
+# A theme heading opens with its status emoji (see the digest prompt).
+_THEME_HEADING = re.compile(r"^\s*(✅|❓|🔁)")
+
+
+def _fold_themes(html_text: str) -> str:
+    """Fold each theme's body into an expandable quote under its heading.
+
+    The heading stays visible in the feed and the body opens on tap. A body is
+    the run of non-blank lines after a heading; summary, deadlines, the quote
+    of the day and «Кратко» have no status heading and stay unfolded. Works on
+    one rendered part at a time, so every part's tags are balanced even when a
+    split lands inside a theme (the tail then shows unfolded).
+    """
+    lines = html_text.split("\n")
+    out: list[str] = []
+    i = 0
+    while i < len(lines):
+        line = lines[i]
+        out.append(line)
+        i += 1
+        if not _THEME_HEADING.match(line):
+            continue
+        end = i
+        while end < len(lines) and lines[end].strip():
+            end += 1
+        if end > i:
+            body = "\n".join(lines[i:end])
+            out.append(f"<blockquote expandable>{body}</blockquote>")
+        i = end
+    return "\n".join(out)
 
 
 def _dated_header(date_str: str) -> str:
@@ -178,9 +236,9 @@ def render_parts(digest: DigestResult, limit: int = TELEGRAM_LIMIT) -> list[str]
     """Render a Digest to ready-to-send Telegram HTML message parts.
 
     Prepends a dated header (which day this digest covers) and the day's
-    activity line to the body, strips
-    horizontal-rule lines, then splits the raw markdown — sizing each chunk by
-    its rendered HTML length — and converts each chunk to HTML independently.
+    activity line to the body, strips horizontal-rule lines, then splits the
+    raw markdown — sizing each chunk by its rendered HTML length — and converts
+    each chunk to HTML independently, folding theme bodies (_fold_themes).
     The header lands on the first part only. Splitting on the raw source
     guarantees a split never severs an HTML tag or entity, so every part is
     valid under parse_mode=HTML. (In the rare case an oversized single line is
@@ -194,7 +252,7 @@ def render_parts(digest: DigestResult, limit: int = TELEGRAM_LIMIT) -> list[str]
     single message gets no marker and is unchanged.
     """
     def to_html(chunk: str) -> str:
-        return markdown_to_telegram_html(chunk, digest.links)
+        return _fold_themes(markdown_to_telegram_html(chunk, digest.links))
 
     def html_len(chunk: str) -> int:
         return len(to_html(chunk))
