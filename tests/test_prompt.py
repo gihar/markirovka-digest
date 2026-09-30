@@ -47,3 +47,44 @@ def test_no_numbered_section_scaffolding():
     prompt = _prompt()
 
     assert not re.search(r"^#+\s*\d+\.", prompt, re.MULTILINE)
+
+
+def test_themes_are_ordered_by_business_impact():
+    """A reader who stops after three themes has still seen what matters most."""
+    prompt = _prompt()
+
+    assert "Порядок тем" in prompt
+    # The priority scale runs regulation → mass outages → individual questions.
+    regulation = prompt.index("регулировани")
+    outages = prompt.index("массовые сбои")
+    private = prompt.index("частные вопросы")
+    assert regulation < outages < private
+
+
+def test_optional_elements_are_defined_with_when_to_omit():
+    """«Что делать», «Сроки» and the quote of the day are optional, never forced."""
+    prompt = _prompt()
+
+    assert "👉 Что делать" in prompt
+    assert "📅 Сроки" in prompt
+    assert "Цитата дня" in prompt
+    # Each optional element states when to leave it out.
+    assert prompt.count("не добавляй") >= 3
+
+
+def test_quiet_day_is_reported_honestly():
+    """A thin day is said to be thin rather than padded into full themes."""
+    prompt = _prompt()
+
+    assert "Тихий день" in prompt
+
+
+def test_existing_prohibitions_survive():
+    """The Telegram-rendering rules that earlier fixes added must stay."""
+    prompt = _prompt()
+
+    assert "не используй таблицы" in prompt
+    assert "Не добавляй в текст дату дайджеста" in prompt
+    assert "Не добавляй собственный заголовок" in prompt
+    assert "Не используй горизонтальные разделители" in prompt
+    assert "Не пиши в дайджесте про спам" in prompt
