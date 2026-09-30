@@ -48,8 +48,44 @@ def test_groups_by_chat_and_shows_moscow_time():
 
     assert "## Маркировка. Главный" in md
     assert "## Маркировка. Молоко" in md
-    assert "[13:00] **ivan**: привет" in md
-    assert "[10:30] **petr**: вопрос" in md
+    assert "13:00] **ivan**: привет" in md
+    assert "10:30] **petr**: вопрос" in md
+
+
+def _addressed(message_id, chat="Маркировка. Молоко", text="привет",
+               hour=10, username="markirovka_moloko"):
+    return TelegramMessage(
+        -1001359438834, chat, "ivan", text,
+        datetime(2026, 7, 4, hour, 0, tzinfo=UTC),
+        message_id=message_id, chat_username=username,
+    )
+
+
+def test_every_message_gets_a_reference_the_model_can_cite():
+    md = prepare_messages_markdown([_addressed(1, hour=10), _addressed(2, hour=11)])
+
+    assert "[m1 · 13:00] **ivan**: привет" in md
+    assert "[m2 · 14:00] **ivan**: привет" in md
+
+
+def test_digest_carries_a_link_for_every_referenced_message(tmp_path):
+    result = generate_digest(
+        [_addressed(185041)], _prompt(tmp_path), "2026-07-04",
+        providers=(_provider(),),
+        post=lambda *_: _ok_response("✅ **Тема** (Молоко) [[m1]]"),
+    )
+
+    assert result.links == {"m1": "https://t.me/markirovka_moloko/185041"}
+
+
+def test_a_message_without_an_address_gets_no_link(tmp_path):
+    result = generate_digest(
+        [_msg()], _prompt(tmp_path), "2026-07-04",
+        providers=(_provider(),),
+        post=lambda *_: _ok_response(),
+    )
+
+    assert result.links == {}
 
 
 def test_generate_digest_posts_openai_payload_and_returns_content(tmp_path):

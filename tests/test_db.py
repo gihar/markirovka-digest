@@ -10,9 +10,10 @@ DAY = date(2026, 7, 4)
 DIGEST_CHANNEL = -1001383199989
 
 
-def _chat(conn, chat_id: int, title: str):
+def _chat(conn, chat_id: int, title: str, username=None):
     conn.execute(
-        "INSERT INTO chats (id, title) VALUES (%s, %s)", (chat_id, title)
+        "INSERT INTO chats (id, title, username) VALUES (%s, %s, %s)",
+        (chat_id, title, username),
     )
 
 
@@ -32,14 +33,15 @@ def _msg(
     text=None,
     caption=None,
     forward_from_chat_id=None,
+    reply_to_message_id=None,
 ):
     conn.execute(
         """INSERT INTO messages
            (message_id, chat_id, user_id, text, caption, forward_from_chat_id,
-            sent_at)
-           VALUES (%s, %s, %s, %s, %s, %s, %s)""",
+            reply_to_message_id, sent_at)
+           VALUES (%s, %s, %s, %s, %s, %s, %s, %s)""",
         (message_id, chat_id, user_id, text, caption, forward_from_chat_id,
-         sent_at),
+         reply_to_message_id, sent_at),
     )
 
 
@@ -313,3 +315,22 @@ def test_orders_by_chat_title_then_time(pg_conn):
 
     # "Главный чат" sorts before "Молоко"; within a chat, by time ascending.
     assert [m.text for m in messages] == ["главный чат", "молоко первое", "молоко второе"]
+
+
+def test_carries_the_address_of_each_message(pg_conn):
+    """Message id and chat username let a Digest link back to the discussion."""
+    _chat(pg_conn, -1001, "Маркировка. Главный чат", username="markirovka_main")
+    _user(pg_conn, 5, username="ivan")
+    _msg(
+        pg_conn, -1001, 4242, 5,
+        datetime(2026, 7, 4, 10, 0, tzinfo=UTC),
+        text="Вопрос про коды маркировки на молоко",
+    )
+
+    [m] = fetch_digest_messages(
+        pg_conn, [-1001], DAY, min_length=1,
+        digest_channel_id=DIGEST_CHANNEL,
+    )
+
+    assert m.message_id == 4242
+    assert m.chat_username == "markirovka_main"

@@ -88,3 +88,11 @@ def test_existing_prohibitions_survive():
     assert "Не добавляй собственный заголовок" in prompt
     assert "Не используй горизонтальные разделители" in prompt
     assert "Не пиши в дайджесте про спам" in prompt
+
+
+def test_theme_heading_cites_the_first_message_of_its_discussion():
+    """The model cites a reference; code, not the model, builds the URL."""
+    prompt = _prompt()
+
+    assert "[[m" in prompt
+    assert "Не пиши ссылки" in prompt

@@ -11,10 +11,12 @@ from dataclasses import dataclass
 from datetime import datetime
 from itertools import groupby
 from pathlib import Path
+from types import MappingProxyType
 from typing import Callable
 
 import httpx
 
+from links import message_url
 from models import DigestResult, LlmProvider, TelegramMessage
 from window import MSK
 
@@ -48,28 +50,52 @@ def _load_prompt(prompt_path: Path) -> str:
     return prompt_path.read_text(encoding="utf-8").strip()
 
 
-def _format_message(msg: TelegramMessage) -> str:
-    """Format a single message as a markdown line, timestamped in Moscow time."""
+def _format_message(ref: str, msg: TelegramMessage) -> str:
+    """Format a single message as a markdown line, timestamped in Moscow time.
+
+    ``ref`` is the reference the model cites to point at this message.
+    """
     time_str = msg.date.astimezone(MSK).strftime("%H:%M")
     sender = msg.sender_name or "Unknown"
-    return f"[{time_str}] **{sender}**: {msg.text}"
+    return f"[{ref} · {time_str}] **{sender}**: {msg.text}"
+
+
+def _referenced(messages: list[TelegramMessage]) -> list[tuple[str, TelegramMessage]]:
+    """Messages in prompt order (chat, then time), each with its reference.
+
+    References are "m1", "m2", … — short, and unique across chats, which
+    Telegram message ids are not.
+    """
+    ordered = sorted(messages, key=lambda m: (m.chat_title, m.date))
+    return [(f"m{i}", msg) for i, msg in enumerate(ordered, start=1)]
+
+
+def message_links(messages: list[TelegramMessage]) -> dict[str, str]:
+    """Reference -> t.me URL for every message that has a Telegram address."""
+    links: dict[str, str] = {}
+    for ref, msg in _referenced(messages):
+        url = message_url(msg.chat_id, msg.chat_username, msg.message_id)
+        if url is not None:
+            links[ref] = url
+    return links
 
 
 def prepare_messages_markdown(messages: list[TelegramMessage]) -> str:
     """Group messages by chat and format as markdown for the LLM.
 
-    Returns a markdown string with chat headers and timestamped messages.
+    Returns a markdown string with chat headers and referenced, timestamped
+    messages.
     """
     if not messages:
         return ""
 
-    sorted_msgs = sorted(messages, key=lambda m: (m.chat_title, m.date))
+    referenced = _referenced(messages)
 
     sections: list[str] = []
-    for chat_title, chat_messages in groupby(sorted_msgs, key=lambda m: m.chat_title):
+    for chat_title, chat_messages in groupby(referenced, key=lambda r: r[1].chat_title):
         lines = [f"## {chat_title}", ""]
-        for msg in chat_messages:
-            lines.append(_format_message(msg))
+        for ref, msg in chat_messages:
+            lines.append(_format_message(ref, msg))
         sections.append("\n".join(lines))
 
     return "\n\n".join(sections)
@@ -270,4 +296,5 @@ def generate_digest(
         token_count=len(messages_md) // 4,
         model=answer.model,
         provider_failures=answer.skipped,
+        links=MappingProxyType(message_links(messages)),
     )

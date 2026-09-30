@@ -36,7 +36,9 @@ SELECT
     COALESCE(u.username, u.first_name, 'Unknown')  AS sender_name,
     COALESCE(m.text, m.caption)                    AS content,
     m.sent_at                                      AS sent_at,
-    m.chat_id                                      AS chat_id
+    m.chat_id                                      AS chat_id,
+    m.message_id                                   AS message_id,
+    c.username                                     AS chat_username
 FROM messages m
 JOIN chats c ON c.id = m.chat_id
 LEFT JOIN users u ON u.id = m.user_id
@@ -66,13 +68,15 @@ def connect(database_url: str) -> psycopg.Connection:
 
 def _row_to_message(row: tuple) -> TelegramMessage:
     """Map a query row to a frozen TelegramMessage."""
-    chat_title, sender_name, content, sent_at, chat_id = row
+    chat_title, sender_name, content, sent_at, chat_id, message_id, username = row
     return TelegramMessage(
         chat_id=chat_id,
         chat_title=chat_title or "",
         sender_name=sender_name,
         text=content,
         date=sent_at,
+        message_id=message_id,
+        chat_username=username,
     )
 
 

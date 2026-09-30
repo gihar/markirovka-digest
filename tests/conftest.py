@@ -38,6 +38,7 @@ CREATE TABLE IF NOT EXISTS messages (
     text TEXT,
     caption TEXT,
     forward_from_chat_id BIGINT,
+    reply_to_message_id BIGINT,
     sent_at TIMESTAMPTZ NOT NULL,
     PRIMARY KEY (chat_id, message_id)
 );

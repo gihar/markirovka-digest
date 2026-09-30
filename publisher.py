@@ -10,6 +10,7 @@ import html
 import logging
 import re
 import time
+from collections.abc import Mapping
 from datetime import date
 from typing import Callable
 
@@ -49,12 +50,37 @@ class TelegramFloodError(Exception):
         super().__init__(f"Telegram flood wait: {retry_after}s")
 
 
-def markdown_to_telegram_html(md: str) -> str:
+# A message reference the model cites, e.g. "[[m12]]" — with the space before
+# it, so a dropped reference leaves no trailing blank behind.
+_REFERENCE = re.compile(r" ?\[\[(m\d+)\]\]")
+
+_LINK_TEXT: str = "→ обсуждение"
+
+
+def _link_references(text: str, links: Mapping[str, str]) -> str:
+    """Turn cited message references into discussion links.
+
+    Runs on already-escaped HTML. Only a reference found in ``links`` — built
+    from Message Store ids — becomes a link; an unknown one is dropped rather
+    than published broken. Markdown links the model writes itself are never
+    converted, so no URL in the Digest comes from the model.
+    """
+    def link(match: re.Match) -> str:
+        url = links.get(match.group(1))
+        if url is None:
+            return ""
+        return f' <a href="{html.escape(url)}">{_LINK_TEXT}</a>'
+
+    return _REFERENCE.sub(link, text)
+
+
+def markdown_to_telegram_html(md: str, links: Mapping[str, str] | None = None) -> str:
     """Convert markdown to Telegram-compatible HTML.
 
-    Escapes HTML entities first, then converts headers and bold/italic. Bold and
-    italic stay within a single line, so line-boundary splitting never cuts a tag
-    unless one line alone exceeds the Telegram limit.
+    Escapes HTML entities first, then converts headers and bold/italic, then
+    cited message references (see _link_references). Bold and italic stay
+    within a single line, so line-boundary splitting never cuts a tag unless one
+    line alone exceeds the Telegram limit.
     """
     text = html.escape(md)
     # Headers (## Header) must be handled before bold.
@@ -66,7 +92,7 @@ def markdown_to_telegram_html(md: str) -> str:
     # Telegram HTML renders the backslash literally, so strip escapes of
     # characters this converter never treats as markup ('*' stays significant).
     text = re.sub(r"\\([_\[\]()~`#+\-=|{}.!])", r"\1", text)
-    return text
+    return _link_references(text, links or {})
 
 
 def _largest_prefix(line: str, limit: int, measure: Callable[[str], int]) -> int:
@@ -169,14 +195,17 @@ def render_parts(digest: DigestResult, limit: int = _TELEGRAM_LIMIT) -> list[str
     so a part plus its marker never exceeds the limit. A digest that fits in a
     single message gets no marker and is unchanged.
     """
+    def to_html(chunk: str) -> str:
+        return markdown_to_telegram_html(chunk, digest.links)
+
     def html_len(chunk: str) -> int:
-        return len(markdown_to_telegram_html(chunk))
+        return len(to_html(chunk))
 
     body = f"{_dated_header(digest.date)}\n\n{_strip_horizontal_rules(digest.markdown)}"
 
     # A digest that fits whole stays a single, marker-free message.
     if html_len(body) <= limit:
-        return [markdown_to_telegram_html(body)]
+        return [to_html(body)]
 
     # It splits: reserve room for the marker on every part but the first. The
     # marker sits behind an inert blank line, so its rendered length adds to a
@@ -184,7 +213,7 @@ def render_parts(digest: DigestResult, limit: int = _TELEGRAM_LIMIT) -> list[str
     marker_len = html_len(_CONTINUATION_MARKER)
     raw_parts = split_message(body, limit - marker_len, measure=html_len)
     return [
-        markdown_to_telegram_html(part if i == 0 else _CONTINUATION_MARKER + part)
+        to_html(part if i == 0 else _CONTINUATION_MARKER + part)
         for i, part in enumerate(raw_parts)
     ]
 

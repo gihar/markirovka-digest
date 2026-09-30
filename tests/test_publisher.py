@@ -103,6 +103,34 @@ def test_escaped_asterisk_is_left_alone():
     assert "\\*" in out
 
 
+def test_a_known_reference_renders_as_a_discussion_link():
+    out = markdown_to_telegram_html(
+        "✅ **Тема** (Молоко) [[m3]]",
+        links={"m3": "https://t.me/markirovka_moloko/42"},
+    )
+    assert out == (
+        '✅ <b>Тема</b> (Молоко) '
+        '<a href="https://t.me/markirovka_moloko/42">→ обсуждение</a>'
+    )
+
+
+def test_an_unknown_reference_is_dropped_not_left_broken():
+    out = markdown_to_telegram_html("✅ **Тема** (Молоко) [[m99]]", links={})
+    assert out == "✅ <b>Тема</b> (Молоко)"
+
+
+def test_a_url_written_by_the_model_is_never_made_a_link():
+    out = markdown_to_telegram_html("см. [тут](https://evil.example/x)", links={})
+    assert "<a" not in out
+
+
+def test_render_parts_links_references_from_the_digest():
+    digest = _digest("✅ **Тема** [[m1]]")
+    digest = DigestResult(**{**digest.__dict__, "links": {"m1": "https://t.me/c/1/2"}})
+    [part] = render_parts(digest)
+    assert '<a href="https://t.me/c/1/2">→ обсуждение</a>' in part
+
+
 def test_render_parts_prepends_dated_header():
     parts = render_parts(_digest("**Итоги** дня"))
     assert parts[0].startswith("🗓 <b>Дайджест чатов по маркировке за 04.07.2026</b>")
