@@ -68,6 +68,43 @@ def test_every_message_gets_a_reference_the_model_can_cite():
     assert "[m2 · 14:00] **ivan**: привет" in md
 
 
+def _reply(message_id, reply_to, hour, sender="petr"):
+    return TelegramMessage(
+        -1001359438834, "Маркировка. Молоко", sender, "ответ",
+        datetime(2026, 7, 4, hour, 0, tzinfo=UTC),
+        message_id=message_id, reply_to_message_id=reply_to,
+    )
+
+
+def test_a_reply_names_the_message_it_answers():
+    md = prepare_messages_markdown([_addressed(1, hour=10), _reply(2, 1, hour=11)])
+
+    assert "[m2 · 14:00] **petr** ↳ m1 (ivan, 13:00): ответ" in md
+
+
+def test_a_reply_to_a_message_outside_the_input_is_still_marked():
+    # The parent was sent yesterday, filtered as too short, or spam.
+    md = prepare_messages_markdown([_reply(2, 999, hour=11)])
+
+    assert "[m1 · 14:00] **petr** ↳ ответ на сообщение вне выборки: ответ" in md
+
+
+def test_a_reply_never_matches_a_message_of_another_chat():
+    other_chat = TelegramMessage(
+        -1001205001393, "Маркировка. Главный чат", "ivan", "вопрос",
+        datetime(2026, 7, 4, 9, 0, tzinfo=UTC), message_id=1,
+    )
+    md = prepare_messages_markdown([other_chat, _reply(2, 1, hour=11)])
+
+    assert "↳ ответ на сообщение вне выборки" in md
+
+
+def test_an_ordinary_message_has_no_reply_mark():
+    md = prepare_messages_markdown([_addressed(1)])
+
+    assert "↳" not in md
+
+
 def test_digest_carries_a_link_for_every_referenced_message(tmp_path):
     result = generate_digest(
         [_addressed(185041)], _prompt(tmp_path), "2026-07-04",

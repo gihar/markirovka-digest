@@ -96,3 +96,10 @@ def test_theme_heading_cites_the_first_message_of_its_discussion():
 
     assert "[[m" in prompt
     assert "Не пиши ссылки" in prompt
+
+
+def test_reply_threads_inform_status_and_grouping():
+    """The model is told what the reply mark means and what to do with it."""
+    prompt = _prompt()
+
+    assert "↳" in prompt

@@ -50,14 +50,43 @@ def _load_prompt(prompt_path: Path) -> str:
     return prompt_path.read_text(encoding="utf-8").strip()
 
 
-def _format_message(ref: str, msg: TelegramMessage) -> str:
+def _sender(msg: TelegramMessage) -> str:
+    return msg.sender_name or "Unknown"
+
+
+def _msk_time(msg: TelegramMessage) -> str:
+    return msg.date.astimezone(MSK).strftime("%H:%M")
+
+
+# Marks a reply whose parent is not in the input: sent on an earlier day, or
+# filtered out as too short, bot-authored or spam.
+_REPLY_TO_UNKNOWN: str = "↳ ответ на сообщение вне выборки"
+
+
+def _reply_mark(
+    msg: TelegramMessage, by_address: dict[tuple[int, int], tuple[str, TelegramMessage]]
+) -> str:
+    """The mark naming a reply's parent, e.g. " ↳ m3 (ivan, 13:58)"; "" if none.
+
+    Telegram message ids are unique only within a chat, so the parent is looked
+    up by (chat, id) — a reply never matches a message of another chat.
+    """
+    if msg.reply_to_message_id is None:
+        return ""
+    parent = by_address.get((msg.chat_id, msg.reply_to_message_id))
+    if parent is None:
+        return f" {_REPLY_TO_UNKNOWN}"
+    ref, parent_msg = parent
+    return f" ↳ {ref} ({_sender(parent_msg)}, {_msk_time(parent_msg)})"
+
+
+def _format_message(ref: str, msg: TelegramMessage, reply_mark: str) -> str:
     """Format a single message as a markdown line, timestamped in Moscow time.
 
-    ``ref`` is the reference the model cites to point at this message.
+    ``ref`` is the reference the model cites to point at this message;
+    ``reply_mark`` names the message it answers (see _reply_mark).
     """
-    time_str = msg.date.astimezone(MSK).strftime("%H:%M")
-    sender = msg.sender_name or "Unknown"
-    return f"[{ref} · {time_str}] **{sender}**: {msg.text}"
+    return f"[{ref} · {_msk_time(msg)}] **{_sender(msg)}**{reply_mark}: {msg.text}"
 
 
 def _referenced(messages: list[TelegramMessage]) -> list[tuple[str, TelegramMessage]]:
@@ -90,12 +119,17 @@ def prepare_messages_markdown(messages: list[TelegramMessage]) -> str:
         return ""
 
     referenced = _referenced(messages)
+    by_address = {
+        (msg.chat_id, msg.message_id): (ref, msg)
+        for ref, msg in referenced
+        if msg.message_id is not None
+    }
 
     sections: list[str] = []
     for chat_title, chat_messages in groupby(referenced, key=lambda r: r[1].chat_title):
         lines = [f"## {chat_title}", ""]
         for ref, msg in chat_messages:
-            lines.append(_format_message(ref, msg))
+            lines.append(_format_message(ref, msg, _reply_mark(msg, by_address)))
         sections.append("\n".join(lines))
 
     return "\n\n".join(sections)

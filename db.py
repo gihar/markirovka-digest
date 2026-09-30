@@ -38,7 +38,8 @@ SELECT
     m.sent_at                                      AS sent_at,
     m.chat_id                                      AS chat_id,
     m.message_id                                   AS message_id,
-    c.username                                     AS chat_username
+    c.username                                     AS chat_username,
+    m.reply_to_message_id                          AS reply_to_message_id
 FROM messages m
 JOIN chats c ON c.id = m.chat_id
 LEFT JOIN users u ON u.id = m.user_id
@@ -68,7 +69,8 @@ def connect(database_url: str) -> psycopg.Connection:
 
 def _row_to_message(row: tuple) -> TelegramMessage:
     """Map a query row to a frozen TelegramMessage."""
-    chat_title, sender_name, content, sent_at, chat_id, message_id, username = row
+    (chat_title, sender_name, content, sent_at, chat_id, message_id, username,
+     reply_to) = row
     return TelegramMessage(
         chat_id=chat_id,
         chat_title=chat_title or "",
@@ -77,6 +79,7 @@ def _row_to_message(row: tuple) -> TelegramMessage:
         date=sent_at,
         message_id=message_id,
         chat_username=username,
+        reply_to_message_id=reply_to,
     )
 
 

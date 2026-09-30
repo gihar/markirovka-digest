@@ -334,3 +334,24 @@ def test_carries_the_address_of_each_message(pg_conn):
 
     assert m.message_id == 4242
     assert m.chat_username == "markirovka_main"
+
+
+def test_carries_the_message_a_reply_answers(pg_conn):
+    _chat(pg_conn, -1001, "Маркировка. Главный чат")
+    _user(pg_conn, 5, username="ivan")
+    _msg(
+        pg_conn, -1001, 1, 5, datetime(2026, 7, 4, 10, 0, tzinfo=UTC),
+        text="Вопрос про коды маркировки на молоко",
+    )
+    _msg(
+        pg_conn, -1001, 2, 5, datetime(2026, 7, 4, 10, 5, tzinfo=UTC),
+        text="Ответ про коды маркировки на молоко", reply_to_message_id=1,
+    )
+
+    question, answer = fetch_digest_messages(
+        pg_conn, [-1001], DAY, min_length=1,
+        digest_channel_id=DIGEST_CHANNEL,
+    )
+
+    assert question.reply_to_message_id is None
+    assert answer.reply_to_message_id == 1

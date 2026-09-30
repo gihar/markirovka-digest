@@ -23,6 +23,8 @@ class TelegramMessage:
     # public username (None for a private chat). None when unknown.
     message_id: int | None = None
     chat_username: str | None = None
+    # Id (within the same chat) of the message this one replies to, if any.
+    reply_to_message_id: int | None = None
 
 
 @dataclass(frozen=True)
