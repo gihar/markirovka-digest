@@ -163,6 +163,31 @@ def _dated_header(date_str: str) -> str:
     return f"🗓 **Дайджест чатов по маркировке за {day.strftime('%d.%m.%Y')}**"
 
 
+def _plural(n: int, one: str, few: str, many: str) -> str:
+    """Russian plural form for ``n``: 1 чат, 3 чата, 5 чатов, 21 чат, 111 чатов."""
+    if n % 10 == 1 and n % 100 != 11:
+        return one
+    if 2 <= n % 10 <= 4 and not 12 <= n % 100 <= 14:
+        return few
+    return many
+
+
+def _activity_line(digest: DigestResult) -> str | None:
+    """"5 чатов · 312 сообщений" — how busy the covered day was.
+
+    Counted by us from the digest's actual input, never by the model. None for
+    a day with nothing in it: a line of zeros tells the reader nothing.
+    """
+    if digest.message_count == 0:
+        return None
+    chats = digest.chat_count
+    messages = digest.message_count
+    return (
+        f"{chats} {_plural(chats, 'чат', 'чата', 'чатов')} · "
+        f"{messages} {_plural(messages, 'сообщение', 'сообщения', 'сообщений')}"
+    )
+
+
 # A whole line that is only a Markdown horizontal rule (---, ***, ___, - - -).
 _HR_LINE = re.compile(r"^[ \t]*([-*_])(?:[ \t]*\1){2,}[ \t]*$", re.MULTILINE)
 
@@ -180,7 +205,8 @@ def _strip_horizontal_rules(md: str) -> str:
 def render_parts(digest: DigestResult, limit: int = _TELEGRAM_LIMIT) -> list[str]:
     """Render a Digest to ready-to-send Telegram HTML message parts.
 
-    Prepends a dated header (which day this digest covers) to the body, strips
+    Prepends a dated header (which day this digest covers) and the day's
+    activity line to the body, strips
     horizontal-rule lines, then splits the raw markdown — sizing each chunk by
     its rendered HTML length — and converts each chunk to HTML independently.
     The header lands on the first part only. Splitting on the raw source
@@ -201,7 +227,10 @@ def render_parts(digest: DigestResult, limit: int = _TELEGRAM_LIMIT) -> list[str
     def html_len(chunk: str) -> int:
         return len(to_html(chunk))
 
-    body = f"{_dated_header(digest.date)}\n\n{_strip_horizontal_rules(digest.markdown)}"
+    title = "\n".join(
+        line for line in (_dated_header(digest.date), _activity_line(digest)) if line
+    )
+    body = f"{title}\n\n{_strip_horizontal_rules(digest.markdown)}"
 
     # A digest that fits whole stays a single, marker-free message.
     if html_len(body) <= limit:

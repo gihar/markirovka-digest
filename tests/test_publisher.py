@@ -145,7 +145,37 @@ def test_render_parts_prepends_dated_header():
 
 def test_render_parts_short_digest_is_one_html_part():
     parts = render_parts(_digest("**Итоги** дня"), limit=4096)
-    assert parts == ["🗓 <b>Дайджест чатов по маркировке за 04.07.2026</b>\n\n<b>Итоги</b> дня"]
+    assert parts == [
+        "🗓 <b>Дайджест чатов по маркировке за 04.07.2026</b>\n"
+        "1 чат · 1 сообщение\n\n<b>Итоги</b> дня"
+    ]
+
+
+def _counted(message_count: int, chat_count: int) -> DigestResult:
+    return DigestResult(
+        **{**_digest("Итоги").__dict__,
+           "message_count": message_count, "chat_count": chat_count}
+    )
+
+
+@pytest.mark.parametrize(
+    "messages, chats, line",
+    [
+        (312, 5, "5 чатов · 312 сообщений"),
+        (21, 1, "1 чат · 21 сообщение"),
+        (24, 3, "3 чата · 24 сообщения"),
+        (111, 2, "2 чата · 111 сообщений"),
+        (14, 22, "22 чата · 14 сообщений"),
+    ],
+)
+def test_activity_line_counts_chats_and_messages(messages, chats, line):
+    [part] = render_parts(_counted(messages, chats))
+    assert part.split("\n")[1] == line
+
+
+def test_a_day_with_no_messages_gets_no_activity_line():
+    [part] = render_parts(_counted(0, 0))
+    assert "сообщени" not in part
 
 
 def test_render_parts_strips_horizontal_rules():
@@ -213,7 +243,7 @@ def test_split_digest_content_is_lossless_after_removing_markers():
     body_md = "\n".join(lines)
     parts = render_parts(_digest(body_md), limit=200)
 
-    header = "🗓 <b>Дайджест чатов по маркировке за 04.07.2026</b>"
+    header = "🗓 <b>Дайджест чатов по маркировке за 04.07.2026</b>\n1 чат · 1 сообщение"
     marker = "<i>(продолжение)</i>"
     joined = "".join(parts).replace(header, "", 1).replace(marker, "")
     assert joined.replace("\n", "") == body_md.replace("\n", "")

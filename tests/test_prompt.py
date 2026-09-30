@@ -110,3 +110,9 @@ def test_theme_heading_carries_industry_hashtags_from_the_input():
 
     assert "Хэштеги" in prompt
     assert "#молоко" in prompt
+
+
+def test_hottest_themes_are_flagged():
+    prompt = _prompt()
+
+    assert "🔥" in prompt
