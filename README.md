@@ -37,7 +37,9 @@ Domain vocabulary is in [`CONTEXT.md`](CONTEXT.md).
 | `window.py` | The previous-MSK-day helper |
 | `db.py` | Read-only PostgreSQL access (psycopg 3) |
 | `analyzer.py` | Format messages, call the LLM (OpenAI-compatible) |
-| `publisher.py` | Telegram-only delivery with message splitting |
+| `links.py` | t.me addresses of Monitored Chat messages |
+| `render.py` | Markdown → Telegram HTML, header, message splitting |
+| `publisher.py` | Telegram-only delivery and alerts |
 | `main.py` | Orchestration |
 
 ## Configuration
