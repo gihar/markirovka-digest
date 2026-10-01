@@ -149,3 +149,10 @@ def test_a_single_industry_chat_theme_needs_no_chat_in_brackets():
     prompt = _prompt()
 
     assert "не пиши скобки" in prompt
+
+
+def test_resolved_status_means_a_question_was_closed():
+    """✅ on a plain statement of fact dilutes what «resolved» tells a reader."""
+    prompt = _prompt()
+
+    assert "справочн" in prompt

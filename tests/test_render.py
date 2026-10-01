@@ -98,7 +98,7 @@ def test_a_known_reference_renders_as_a_discussion_link():
     )
     assert out == (
         '✅ <b>Тема</b> (Молоко) '
-        '<a href="https://t.me/markirovka_moloko/42">→ обсуждение</a>'
+        '<a href="https://t.me/markirovka_moloko/42">обсуждение</a>'
     )
 
 
@@ -116,7 +116,7 @@ def test_render_parts_links_references_from_the_digest():
     digest = _digest("✅ **Тема** [[m1]]")
     digest = DigestResult(**{**digest.__dict__, "links": {"m1": "https://t.me/c/1/2"}})
     [part] = render_parts(digest)
-    assert '<a href="https://t.me/c/1/2">→ обсуждение</a>' in part
+    assert '<a href="https://t.me/c/1/2">обсуждение</a>' in part
 
 
 def test_a_theme_heading_keeps_its_hashtags_as_plain_text():

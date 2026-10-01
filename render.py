@@ -28,7 +28,8 @@ _CONTINUATION_MARKER: str = f"*{CONTINUATION_TEXT}*\n\n"
 # it, so a dropped reference leaves no trailing blank behind.
 _REFERENCE = re.compile(r" ?\[\[(m\d+)\]\]")
 
-_LINK_TEXT: str = "→ обсуждение"
+# No arrow: a screen reader would read it aloud before every link.
+_LINK_TEXT: str = "обсуждение"
 
 
 def _link_references(text: str, links: Mapping[str, str]) -> str:
