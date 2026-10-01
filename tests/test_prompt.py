@@ -156,3 +156,23 @@ def test_resolved_status_means_a_question_was_closed():
     prompt = _prompt()
 
     assert "справочн" in prompt
+
+
+def test_a_lone_unanswered_question_goes_to_kratko_not_a_theme_block():
+    """A real quiet day came out as 11 theme blocks, five of them one message long."""
+    prompt = _prompt()
+
+    assert "Одиночный вопрос" in prompt
+
+
+def test_one_discussion_is_never_split_into_two_themes():
+    """Two themes once cited the same first message — one thread cut in two."""
+    prompt = _prompt()
+
+    assert "одной и той же ссылкой" in prompt
+
+
+def test_generic_advice_is_not_an_action():
+    prompt = _prompt()
+
+    assert "обратитесь в поддержку" in prompt
