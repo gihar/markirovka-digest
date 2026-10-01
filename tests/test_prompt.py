@@ -142,3 +142,10 @@ def test_kratko_is_a_list_not_one_long_line():
 
     assert "« · »" not in prompt
     assert "- тема одной строкой" in prompt
+
+
+def test_a_single_industry_chat_theme_needs_no_chat_in_brackets():
+    """The hashtag already names the chat; brackets would say it twice."""
+    prompt = _prompt()
+
+    assert "не пиши скобки" in prompt

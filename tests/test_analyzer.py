@@ -46,8 +46,8 @@ def test_groups_by_chat_and_shows_moscow_time():
 
     md = prepare_messages_markdown(messages)
 
-    assert "## Маркировка. Главный" in md
-    assert "## Маркировка. Молоко" in md
+    assert "## Главный" in md
+    assert "## Молоко" in md
     assert "13:00] **ivan**: привет" in md
     assert "10:30] **petr**: вопрос" in md
 
@@ -73,13 +73,13 @@ def test_a_chat_header_names_its_industry_hashtag():
         [_addressed(1)], chat_hashtags={-1001359438834: "#молоко"}
     )
 
-    assert "## Маркировка. Молоко · #молоко" in md
+    assert "## Молоко · #молоко" in md
 
 
 def test_a_chat_without_a_hashtag_keeps_a_bare_header():
     md = prepare_messages_markdown([_addressed(1)], chat_hashtags={})
 
-    assert "## Маркировка. Молоко\n" in md
+    assert "## Молоко\n" in md
 
 
 def test_hashtags_outside_the_fixed_set_are_removed_from_the_digest(tmp_path):
@@ -215,7 +215,7 @@ def test_generate_digest_posts_openai_payload_and_returns_content(tmp_path):
     assert payload["model"] == "anthropic/claude-sonnet-4.6"
     assert payload["messages"][0] == {"role": "system", "content": "Ты аналитик маркировки."}
     assert payload["messages"][1]["role"] == "user"
-    assert "Маркировка. Молоко" in payload["messages"][1]["content"]
+    assert "## Молоко" in payload["messages"][1]["content"]
 
 
 def test_first_provider_produces_the_digest_and_the_next_is_untouched(tmp_path):
@@ -437,3 +437,17 @@ def test_unknown_hashtags_are_removed_even_next_to_punctuation(text, expected):
     from analyzer import keep_known_hashtags
 
     assert keep_known_hashtags(text, frozenset({"#молоко"})) == expected
+
+
+def test_the_shared_chat_prefix_is_dropped_from_headers():
+    """Every Monitored Chat is «Маркировка. …»; the prefix only lengthens headings."""
+    md = prepare_messages_markdown([_msg(chat="Маркировка. Легпром и обувь")])
+
+    assert "## Легпром и обувь\n" in md
+    assert "Маркировка." not in md
+
+
+def test_a_chat_without_the_prefix_keeps_its_name():
+    md = prepare_messages_markdown([_msg(chat="Честный ЗНАК")])
+
+    assert "## Честный ЗНАК\n" in md

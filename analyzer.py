@@ -111,6 +111,16 @@ def message_links(messages: list[TelegramMessage]) -> dict[str, str]:
     return links
 
 
+# Every Monitored Chat's title opens with this; in a digest heading it only
+# costs width on a phone screen, so the model sees the short name.
+_SHARED_CHAT_PREFIX: str = "Маркировка. "
+
+
+def _chat_label(chat_title: str) -> str:
+    """The chat's name as the digest shows it: «Молоко», not «Маркировка. Молоко»."""
+    return chat_title.removeprefix(_SHARED_CHAT_PREFIX) or chat_title
+
+
 def prepare_messages_markdown(
     messages: list[TelegramMessage],
     chat_hashtags: Mapping[int, str] | None = None,
@@ -139,7 +149,8 @@ def prepare_messages_markdown(
     for chat_title, chat_messages in groupby(referenced, key=lambda r: r[1].chat_title):
         chat_messages = list(chat_messages)
         hashtag = hashtags.get(chat_messages[0][1].chat_id)
-        header = f"## {chat_title} · {hashtag}" if hashtag else f"## {chat_title}"
+        label = _chat_label(chat_title)
+        header = f"## {label} · {hashtag}" if hashtag else f"## {label}"
         lines = [header, ""]
         for ref, msg in chat_messages:
             lines.append(_format_message(ref, msg, _reply_mark(msg, by_address)))
