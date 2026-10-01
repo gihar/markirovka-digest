@@ -112,7 +112,14 @@ def send_parts(
     for i, part in enumerate(parts):
         if i > 0:
             sleep(interval)  # pace to stay under the per-chat flood limit
-        payload = {"chat_id": chat_id, "text": part, "parse_mode": "HTML"}
+        payload = {
+            "chat_id": chat_id,
+            "text": part,
+            "parse_mode": "HTML",
+            # A digest links every theme to its discussion; without this,
+            # Telegram attaches a preview card of the first link to each part.
+            "link_preview_options": {"is_disabled": True},
+        }
         if _send_one(url, payload, post, sleep, max_flood_retries):
             sent += 1
         else:

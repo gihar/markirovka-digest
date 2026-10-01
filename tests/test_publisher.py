@@ -48,9 +48,14 @@ def test_send_parts_posts_each_part_with_html_payload():
         "https://api.telegram.org/bot123:abc/sendMessage",
         "https://api.telegram.org/bot123:abc/sendMessage",
     ]
+    # Previews off: a digest carries a discussion link per theme, and Telegram
+    # would otherwise attach a card of the first one under every part.
+    no_preview = {"is_disabled": True}
     assert [c[1] for c in calls] == [
-        {"chat_id": "-1009999", "text": "часть1", "parse_mode": "HTML"},
-        {"chat_id": "-1009999", "text": "часть2", "parse_mode": "HTML"},
+        {"chat_id": "-1009999", "text": "часть1", "parse_mode": "HTML",
+         "link_preview_options": no_preview},
+        {"chat_id": "-1009999", "text": "часть2", "parse_mode": "HTML",
+         "link_preview_options": no_preview},
     ]
 
 

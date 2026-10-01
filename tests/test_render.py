@@ -271,9 +271,10 @@ def test_a_theme_body_folds_under_its_visible_heading():
     ) in part
 
 
-@pytest.mark.parametrize("status", ["✅", "❓", "🔁"])
-def test_every_status_heading_starts_a_folded_theme(status):
-    [part] = render_parts(_digest(f"{status} 🔥 **Тема**\nСуть."))
+@pytest.mark.parametrize("lead", ["✅", "❓", "🔁", "🔥 ✅", "🔥❓"])
+def test_every_status_heading_starts_a_folded_theme(lead):
+    # 🔥 belongs after the status, but a model may put it first.
+    [part] = render_parts(_digest(f"{lead} **Тема**\nСуть."))
     assert "<blockquote expandable>Суть.</blockquote>" in part
 
 

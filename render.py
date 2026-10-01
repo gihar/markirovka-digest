@@ -153,14 +153,15 @@ def split_message(
     return parts
 
 
-# A theme heading opens with its status emoji (see the digest prompt).
-_THEME_HEADING = re.compile(r"^\s*(✅|❓|🔁)")
+# A theme heading opens with its status emoji (see the digest prompt) — or with
+# 🔥 just before it, an order the prompt does not ask for but a model may use.
+_THEME_HEADING = re.compile(r"^\s*(🔥\s*)?(✅|❓|🔁)")
 
 
 # A paragraph that ends the theme before it: the next theme, the quote of the
 # day, a bold-led section line («Кратко», «Сроки», weekly section titles) or a
 # markdown heading.
-_ENDS_THEME = re.compile(r"^\s*(✅|❓|🔁|💬|\*\*|#)")
+_ENDS_THEME = re.compile(r"^\s*(🔥|✅|❓|🔁|💬|\*\*|#)")
 
 
 def _tighten_themes(md: str) -> str:
