@@ -186,11 +186,17 @@ def _tighten_themes(md: str) -> str:
     return "\n\n".join(out)
 
 
+# «👉 Что делать» — the line a reader acts on, kept out of the fold.
+_ACTION_LINE = re.compile(r"^\s*👉")
+
+
 def _fold_themes(html_text: str) -> str:
     """Fold each theme's body into an expandable quote under its heading.
 
-    The heading stays visible in the feed and the body opens on tap. A body is
-    the run of non-blank lines after a heading; summary, deadlines, the quote
+    The heading stays visible in the feed and the body opens on tap; the
+    «👉 Что делать» line stays visible too, right under the heading, since it
+    is the line a reader acts on. A body is the run of non-blank lines after a
+    heading; summary, deadlines, the quote
     of the day and «Кратко» have no status heading and stay unfolded. Works on
     one rendered part at a time, so every part's tags are balanced even when a
     split lands inside a theme (the tail then shows unfolded).
@@ -207,9 +213,11 @@ def _fold_themes(html_text: str) -> str:
         end = i
         while end < len(lines) and lines[end].strip():
             end += 1
-        if end > i:
-            body = "\n".join(lines[i:end])
-            out.append(f"<blockquote expandable>{body}</blockquote>")
+        body = lines[i:end]
+        out.extend(line for line in body if _ACTION_LINE.match(line))
+        folded = [line for line in body if not _ACTION_LINE.match(line)]
+        if folded:
+            out.append(f"<blockquote expandable>{chr(10).join(folded)}</blockquote>")
         i = end
     return "\n".join(out)
 

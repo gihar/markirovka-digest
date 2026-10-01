@@ -134,3 +134,11 @@ def test_weekly_prompt_covers_trends_top_themes_and_open_questions():
     assert "без ответа" in prompt
     assert "не используй таблицы" in prompt
     assert "Не добавляй собственный заголовок" in prompt
+
+
+def test_kratko_is_a_list_not_one_long_line():
+    """A dot-separated run-on line turns into a solid paragraph on a phone."""
+    prompt = _prompt()
+
+    assert "« · »" not in prompt
+    assert "- тема одной строкой" in prompt

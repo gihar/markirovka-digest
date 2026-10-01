@@ -267,7 +267,8 @@ def test_a_theme_body_folds_under_its_visible_heading():
     [part] = render_parts(_digest(_THEME.format(i=1)))
     assert (
         "✅ <b>Тема 1</b> (Молоко)\n"
-        "<blockquote expandable>Суть обсуждения 1.\n👉 Что делать: действие 1.</blockquote>"
+        "👉 Что делать: действие 1.\n"
+        "<blockquote expandable>Суть обсуждения 1.</blockquote>"
     ) in part
 
 
@@ -307,8 +308,8 @@ def test_a_split_digest_keeps_every_theme_whole_in_one_part():
         assert part.count("<blockquote expandable>") == part.count("</blockquote>")
     for i in range(40):
         [home] = [p for p in parts if f"<b>Тема {i}</b>" in p]
-        assert f"<blockquote expandable>Суть обсуждения {i}." in home
-        assert f"действие {i}.</blockquote>" in home
+        assert f"👉 Что делать: действие {i}." in home
+        assert f"<blockquote expandable>Суть обсуждения {i}.</blockquote>" in home
 
 
 def test_a_theme_cut_across_parts_still_yields_valid_html():
@@ -352,7 +353,8 @@ def test_blank_lines_inside_a_theme_do_not_stop_the_fold():
 
     assert (
         "✅ <b>Тема 1</b> (Молоко)\n"
-        "<blockquote expandable>Суть 1.\n👉 Что делать: действие 1.</blockquote>\n\n"
+        "👉 Что делать: действие 1.\n"
+        "<blockquote expandable>Суть 1.</blockquote>\n\n"
         "❓ <b>Тема 2</b> (Молоко)\n"
         "<blockquote expandable>Суть 2.</blockquote>\n\n"
         "💬 <i>«цитата»</i> — ivan, Молоко\n\n"
@@ -364,3 +366,17 @@ def test_a_markdown_heading_ends_the_theme_before_it():
     [part] = render_parts(_digest("✅ **Тема**\nСуть.\n\n### Кратко\n- мелочь"))
     assert "<blockquote expandable>Суть.</blockquote>" in part
     assert "<b>Кратко</b>\n- мелочь" in part
+
+
+def test_the_action_line_stays_visible_above_the_fold():
+    # «Что делать» is the most useful line of a theme; folded last, readers
+    # would only find it by expanding.
+    [part] = render_parts(_digest("✅ **Тема**\nСуть.\nЕщё суть.\n👉 Что делать: действие."))
+    heading, rest = part.split("✅ <b>Тема</b>\n", 1)
+    assert rest.startswith("👉 Что делать: действие.\n<blockquote expandable>")
+    assert "👉" not in rest.split("<blockquote", 1)[1]
+
+
+def test_a_theme_with_only_an_action_line_gets_no_empty_fold():
+    [part] = render_parts(_digest("✅ **Тема**\n👉 Что делать: действие."))
+    assert part.endswith("✅ <b>Тема</b>\n👉 Что делать: действие.")
