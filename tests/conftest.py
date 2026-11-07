@@ -40,6 +40,7 @@ CREATE TABLE IF NOT EXISTS messages (
     forward_from_chat_id BIGINT,
     reply_to_message_id BIGINT,
     sent_at TIMESTAMPTZ NOT NULL,
+    raw_message JSONB,
     PRIMARY KEY (chat_id, message_id)
 );
 """

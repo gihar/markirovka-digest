@@ -15,6 +15,7 @@ import psycopg
 
 from digest_archive import ChannelPost
 from models import TelegramMessage
+from rich import flatten_rich_message
 
 # Author display name falls back username -> first_name -> 'Unknown'.
 # Content is the text, or the media caption when there is no text.
@@ -129,13 +130,19 @@ def fetch_digest_messages(
 # Digest Channel posts forwarded into the allow-listed chats from ``since`` (an
 # Europe/Moscow calendar day) on, in publication order. Read only to find
 # published Digests (ADR-0003) — never as discussion input.
+#
+# A rich post carries no text/caption — its content lives in raw_message's
+# rich_message blocks (a rich Digest is published as one Rich Message, ADR-0004;
+# verified against a live forward, 2026-11-06). Such rows pass the filter by
+# their raw content and are flattened back to text at read time; a forwarded
+# post with neither text nor rich content is not a Digest and stays out.
 _CHANNEL_POSTS_QUERY = """
-SELECT m.chat_id, COALESCE(m.text, m.caption)
+SELECT m.chat_id, COALESCE(m.text, m.caption), m.raw_message
 FROM messages m
 WHERE m.chat_id = ANY(%(chat_ids)s)
   AND m.forward_from_chat_id = %(digest_channel_id)s
   AND (m.sent_at AT TIME ZONE 'Europe/Moscow')::date >= %(since)s
-  AND COALESCE(m.text, m.caption) IS NOT NULL
+  AND (COALESCE(m.text, m.caption) IS NOT NULL OR m.raw_message ? 'rich_message')
 ORDER BY m.sent_at, m.chat_id, m.message_id
 """
 
@@ -161,4 +168,10 @@ def fetch_channel_posts(
             },
         )
         rows = cur.fetchall()
-    return [ChannelPost(chat_id=chat_id, text=text) for chat_id, text in rows]
+    posts: list[ChannelPost] = []
+    for chat_id, text, raw_message in rows:
+        if text is None:
+            text = flatten_rich_message(raw_message)
+        if text:
+            posts.append(ChannelPost(chat_id=chat_id, text=text))
+    return posts

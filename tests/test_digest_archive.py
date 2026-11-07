@@ -3,6 +3,7 @@
 from datetime import date
 
 from digest_archive import ChannelPost, published_digest
+from rich import flatten_rich_message
 
 DAY = date(2026, 9, 29)
 TITLE = "🗓 Дайджест чатов по маркировке за 29.09.2026"
@@ -78,3 +79,26 @@ def test_a_later_manual_forward_of_part_one_does_not_cut_the_digest():
     ]
 
     assert published_digest(posts, DAY) == f"{TITLE}\n\nЧасть один.\n\nЧасть два."
+
+
+def test_a_rich_digest_is_found_once_flattened():
+    """Rich-выпуск после flatten узнаётся по титульной строке (ADR-0003/0004).
+
+    Rich-пост канала не несёт text — архив получает его из Store уже
+    развёрнутым в текст (fetch_channel_posts), и контракт титула держится:
+    первая строка flatten ровно digest_title.
+    """
+    raw = {
+        "rich_message": {"blocks": [
+            {"type": "heading", "text": TITLE, "size": 5},
+            {"type": "paragraph", "text": "Резюме дня."},
+            {"type": "heading", "text": "Тема дня", "size": 6},
+            {"type": "blockquote", "blocks": [
+                {"type": "paragraph", "text": "Тело темы под свёрткой."},
+            ]},
+            {"type": "footer", "text": "Дайджест чатов по маркировке · 29.09.2026"},
+        ]}
+    }
+    post = ChannelPost(chat_id=MAIN, text=flatten_rich_message(raw))
+
+    assert published_digest([post], DAY) == post.text

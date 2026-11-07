@@ -1,5 +1,6 @@
 """Behavior: fetch_digest_messages reads the previous MSK day from the Store."""
 
+import json
 from datetime import UTC, date, datetime
 
 from db import fetch_channel_posts, fetch_digest_messages
@@ -35,14 +36,16 @@ def _msg(
     caption=None,
     forward_from_chat_id=None,
     reply_to_message_id=None,
+    raw_message=None,
 ):
     conn.execute(
         """INSERT INTO messages
            (message_id, chat_id, user_id, text, caption, forward_from_chat_id,
-            reply_to_message_id, sent_at)
-           VALUES (%s, %s, %s, %s, %s, %s, %s, %s)""",
+            reply_to_message_id, sent_at, raw_message)
+           VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)""",
         (message_id, chat_id, user_id, text, caption, forward_from_chat_id,
-         reply_to_message_id, sent_at),
+         reply_to_message_id, sent_at, json.dumps(raw_message)
+         if raw_message is not None else None),
     )
 
 
@@ -390,4 +393,41 @@ def test_channel_posts_are_the_digest_channel_forwards_since_a_day(pg_conn):
     assert posts == [
         ChannelPost(chat_id=-1001, text="дайджест"),
         ChannelPost(chat_id=-1001, text="продолжение"),
+    ]
+
+
+# A rich post carries no text — its content lives in raw_message's
+# rich_message blocks (verified against a live forward, 2026-11-06).
+_RICH_POST_RAW = {
+    "rich_message": {"blocks": [
+        {"type": "heading", "text": "🗓 Дайджест чатов по маркировке за 03.07.2026", "size": 5},
+        {"type": "paragraph", "text": "Резюме дня одной строкой."},
+        {"type": "footer", "text": "Дайджест чатов по маркировке · 03.07.2026"},
+    ]}
+}
+
+
+def test_channel_posts_include_rich_days_without_text(pg_conn):
+    """Rich-пост без text не молча выпадает: текст восстанавливается из блоков."""
+    _chat(pg_conn, -1001, "Маркировка. Главный чат")
+    _msg(  # rich-пост канала: text/caption пусты, контент в raw_message
+        pg_conn, -1001, 10, None, datetime(2026, 7, 3, 6, 0, tzinfo=UTC),
+        forward_from_chat_id=DIGEST_CHANNEL, raw_message=_RICH_POST_RAW,
+    )
+    _msg(  # обычный форвард без текста и без rich-контента — остаётся мусорным
+        pg_conn, -1001, 11, None, datetime(2026, 7, 3, 7, 0, tzinfo=UTC),
+        forward_from_chat_id=DIGEST_CHANNEL,
+    )
+
+    posts = fetch_channel_posts(
+        pg_conn, [-1001], since=date(2026, 7, 3), digest_channel_id=DIGEST_CHANNEL
+    )
+
+    assert posts == [
+        ChannelPost(
+            chat_id=-1001,
+            text="🗓 Дайджест чатов по маркировке за 03.07.2026\n\n"
+                 "Резюме дня одной строкой.\n\n"
+                 "Дайджест чатов по маркировке · 03.07.2026",
+        ),
     ]
