@@ -30,6 +30,20 @@ from render import (
 # markers on the title come off; the status emoji stays as plain text.
 _BOLD = re.compile(r"\*\*")
 
+# LLMs habitually backslash-escape markdown punctuation in usernames and
+# names (Alla\_tj1). Rich Markdown renders the backslash literally, so
+# escapes of characters this renderer never treats as markup come off
+# ('*' stays significant) — same rule as the legacy path in render.py.
+_ESCAPE = re.compile(r"\\([_\[\]()~`#+\-=|{}.!])")
+
+# An industry hashtag in a theme heading (with the space before it), moved
+# to the end of the line so it cannot fuse with the discussion link.
+_HASHTAG = re.compile(r"\s?(#[^\W\d_]\w*)")
+
+
+def _strip_escapes(md: str) -> str:
+    return _ESCAPE.sub(r"\1", md)
+
 # Bot API limits for one InputRichMessage: 32 768 UTF-8 characters and 500
 # blocks (list items, table rows and quote content each count as blocks).
 MAX_RICH_CHARS: int = 32_768
@@ -173,7 +187,16 @@ def _rich_themes(md: str, links: Mapping[str, str]) -> str:
         if not _THEME_HEADING.match(lines[0]):
             out.append(_link_references(paragraph, links))
             continue
-        heading = f"###### {_link_references(_BOLD.sub('', lines[0]), links).strip()}"
+        # Reorder: <emoji> Title (chats) [обсуждение](url) #hashtag — the
+        # link follows the chat parens, hashtags trail, so two adjacent blue
+        # links never fuse into one unreadable run.
+        raw_heading = _BOLD.sub("", lines[0])
+        hashtags = _HASHTAG.findall(raw_heading)
+        raw_heading = _HASHTAG.sub("", raw_heading).rstrip()
+        heading = _link_references(raw_heading, links).strip()
+        if hashtags:
+            heading = f"{heading} {' '.join(hashtags)}"
+        heading = f"###### {heading}"
         actions = [ln for ln in lines[1:] if _ACTION_LINE.match(ln)]
         body = [ln for ln in lines[1:] if not _ACTION_LINE.match(ln)]
         # Каждый элемент — отдельным абзацем: в Rich Markdown мягкий перенос
@@ -206,7 +229,7 @@ def render_rich_titled(
     heading = f"##### {_BOLD.sub('', title).strip()}"
     head = heading if lead is None else f"{heading}\n\n{lead}"
     body = _rich_themes(
-        _tighten_themes(_strip_horizontal_rules(markdown)),
+        _tighten_themes(_strip_horizontal_rules(_strip_escapes(markdown))),
         links or {},
     )
     return f"{head}\n\n{body}\n\n<footer>{footer}</footer>"
@@ -225,6 +248,6 @@ def render_rich(digest: DigestResult) -> str:
         digest_title(day),
         digest.markdown,
         digest.links,
-        footer=f"Дайджест чатов по маркировке · {day.strftime('%d.%m.%Y')}",
+        footer="Дайджест чатов по маркировке",
         lead=_activity_line(digest),
     )

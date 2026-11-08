@@ -75,7 +75,37 @@ def test_unknown_reference_is_dropped_silently():
 def test_rich_ends_with_footer_naming_the_issue():
     out = render_rich(_digest("Резюме дня."))
 
-    assert out.endswith("<footer>Дайджест чатов по маркировке · 04.07.2026</footer>")
+    # Без даты: она уже в заголовке выпуска, дубль в футере не читается.
+    assert out.endswith("<footer>Дайджест чатов по маркировке</footer>")
+
+
+def test_rich_strips_backslash_escapes_from_model_markdown():
+    # LLM habitually escapes punctuation in usernames (Alla\_tj1); in Rich
+    # Markdown the backslash renders literally, so it must come off.
+    md = (
+        "❓ **Тема о кодах** (Главный чат) [[m1]]\n"
+        "Вопрос от Alla\\_tj1 про tasy\\_emdina и скобки \\(тест\\)."
+    )
+
+    out = render_rich(_digest(md, links={"m1": "https://t.me/c/1/1"}))
+
+    assert "\\" not in out
+    assert "Alla_tj1" in out
+    assert "tasy_emdina" in out
+    assert "(тест)" in out
+
+
+def test_theme_heading_puts_the_link_before_the_hashtag():
+    # Two adjacent blue links («#молоко обсуждение») read as one run-on;
+    # the discussion link goes right after the chat parens, the hashtag last.
+    md = "✅ **Срок подключения ТС Пилот** #молоко [[m40]]\nТело темы."
+
+    out = render_rich(_digest(md, links={"m40": "https://t.me/c/1/40"}))
+
+    assert (
+        "###### ✅ Срок подключения ТС Пилот "
+        "[обсуждение](https://t.me/c/1/40) #молоко" in out
+    )
 
 
 def test_limits_reject_text_over_the_rich_message_budget():
