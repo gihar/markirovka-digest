@@ -188,6 +188,30 @@ def _rich_themes(md: str, links: Mapping[str, str]) -> str:
     return "\n\n".join(out)
 
 
+def render_rich_titled(
+    title: str,
+    markdown: str,
+    links: Mapping[str, str] | None = None,
+    *,
+    footer: str = "",
+    lead: str | None = None,
+) -> str:
+    """Render a titled issue to Rich Markdown: an ``h5`` heading (the title's
+    own bold markers come off — the heading keeps its emphasis), an optional
+    lead paragraph right under it, the transformed body, and a footer line.
+
+    ``render_rich`` covers the daily Digest; the weekly review composes its
+    own title and footer through this entry point.
+    """
+    heading = f"##### {_BOLD.sub('', title).strip()}"
+    head = heading if lead is None else f"{heading}\n\n{lead}"
+    body = _rich_themes(
+        _tighten_themes(_strip_horizontal_rules(markdown)),
+        links or {},
+    )
+    return f"{head}\n\n{body}\n\n<footer>{footer}</footer>"
+
+
 def render_rich(digest: DigestResult) -> str:
     """Render a Digest to Rich Markdown for ``sendRichMessage``.
 
@@ -196,16 +220,11 @@ def render_rich(digest: DigestResult) -> str:
     flattened back to plain text it equals ``digest_title`` exactly, which is
     the archive's recognition contract (ADR-0003).
     """
-    title = f"##### {digest_title(date.fromisoformat(digest.date))}"
-    activity = _activity_line(digest)
-    body = _rich_themes(
-        _tighten_themes(_strip_horizontal_rules(digest.markdown)),
+    day = date.fromisoformat(digest.date)
+    return render_rich_titled(
+        digest_title(day),
+        digest.markdown,
         digest.links,
+        footer=f"Дайджест чатов по маркировке · {day.strftime('%d.%m.%Y')}",
+        lead=_activity_line(digest),
     )
-
-    head = title if activity is None else f"{title}\n\n{activity}"
-    footer = (
-        f"<footer>Дайджест чатов по маркировке · "
-        f"{date.fromisoformat(digest.date).strftime('%d.%m.%Y')}</footer>"
-    )
-    return f"{head}\n\n{body}\n\n{footer}"

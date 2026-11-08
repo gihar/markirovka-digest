@@ -1,6 +1,6 @@
 """Weekly review — the week's published Digests, condensed into one post.
 
-A separate run-once entry point (Railway Cron, Fridays): it reads the Digests
+A separate run-once entry point (Railway Cron, Saturdays): it reads the Digests
 published over the seven days ending yesterday back from the Message Store
 (ADR-0003), asks the LLM for trends, the week's top themes and the questions
 left open, and publishes the review to the Digest Channel. The daily Digest is
@@ -19,8 +19,7 @@ from db import connect, fetch_channel_posts
 from digest_archive import ChannelPost, published_digest
 from main import run_and_alert_on_failure
 from models import DigestResult, LlmProvider
-from publisher import alert_degraded, alert_failure, send_parts
-from render import render_titled_parts
+from publisher import alert_degraded, alert_delivery_failure, publish_review
 from window import previous_msk_week
 
 logger = logging.getLogger(__name__)
@@ -141,10 +140,9 @@ def _review_once(start: date, end: date, config: Config) -> int | None:
                 providers=config.llm_providers,
                 chat_hashtags=chat_hashtags,
             ),
-            publish_review=lambda review: send_parts(
-                render_titled_parts(weekly_title(start, end), review.markdown),
-                config.telegram_bot_token,
-                config.telegram_digest_chat_id,
+            publish_review=lambda review: publish_review(
+                review, weekly_title(start, end), config,
+                subject=_subject(start, end),
             ),
             report_review=lambda review: alert_degraded(
                 end, review, config, subject=_subject(start, end)
@@ -162,7 +160,9 @@ def run() -> None:
 
     parts = run_and_alert_on_failure(
         lambda: _review_once(start, end, config),
-        lambda error: alert_failure(
+        # An unknown rich delivery gets its own «check the channel» alert
+        # instead of the plain «not published» one (ADR-0004 ladder).
+        lambda error: alert_delivery_failure(
             end, error, config, subject=_subject(start, end)
         ),
     )

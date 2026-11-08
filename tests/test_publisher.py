@@ -4,14 +4,18 @@ import re
 from datetime import date
 from pathlib import Path
 
+import httpx
 import pytest
 
 from config import Config
 from models import DigestResult, LlmProvider
 from publisher import (
     _TELEGRAM_SEND_INTERVAL,
+    UnknownDeliveryError,
     alert_degraded,
     alert_failure,
+    publish,
+    publish_review,
     TelegramDeliveryError,
     TelegramFloodError,
     render_alert,
@@ -388,3 +392,192 @@ def test_a_degraded_alert_can_name_what_was_published():
     assert text.startswith(
         "🟡 <b>Обзор недели 25.09–01.10.2026 опубликован на запасном провайдере</b>"
     )
+
+
+# --- Лестница доставки rich-выпуска (#25, ADR-0004) ---
+#
+# 429 → ждать retry_after, ограниченные повторы; исчерпание 429 и
+# валидационный 4xx — definite-отказ (сообщения нет) → fallback на старый
+# HTML-путь + алерт; таймаут/5xx — исход неизвестен → алерт, без повтора
+# и без fallback (дубль в канале хуже позднего выпуска).
+
+_DIGEST_CHAT = "-1001383199989"
+_RICH_DIGEST = _digest("Резюме дня.\n\n❓ **Тема** [[m1]]\nтело\n👉 Что делать: шаг.")
+
+
+def _method(url: str) -> str:
+    return url.rsplit("/", 1)[1]
+
+
+def _status_error(code: int) -> httpx.HTTPStatusError:
+    request = httpx.Request("POST", "https://api.telegram.org")
+    return httpx.HTTPStatusError(
+        f"HTTP {code}", request=request, response=httpx.Response(code, request=request)
+    )
+
+
+def test_publish_sends_one_rich_message():
+    calls = []
+    sent = publish(
+        _RICH_DIGEST, _config(None),
+        post=lambda url, payload: calls.append((url, payload)), sleep=_NO_SLEEP,
+    )
+
+    assert sent == 1
+    (url, payload), = calls
+    assert _method(url) == "sendRichMessage"
+    assert payload["chat_id"] == _DIGEST_CHAT
+    markdown = payload["rich_message"]["markdown"]
+    assert markdown.startswith("##### 🗓 Дайджест чатов по маркировке за 04.07.2026")
+    assert "<blockquote expandable>" in markdown
+    assert markdown.rstrip().endswith("</footer>")
+
+
+def test_publish_retries_the_rich_send_after_a_flood_wait():
+    attempts, slept = [], []
+
+    def flooded_once(url, payload):
+        attempts.append(_method(url))
+        if len(attempts) == 1:
+            raise TelegramFloodError(retry_after=7.0)
+
+    sent = publish(
+        _RICH_DIGEST, _config(None), post=flooded_once, sleep=slept.append,
+    )
+
+    assert sent == 1
+    assert attempts == ["sendRichMessage", "sendRichMessage"]
+    assert 7.0 in slept  # waited retry_after before the one retry
+
+
+def test_publish_falls_back_to_html_parts_when_flood_never_clears():
+    calls = []
+
+    def flood_only_rich(url, payload):
+        calls.append(_method(url))
+        if _method(url) == "sendRichMessage":
+            raise TelegramFloodError(retry_after=1.0)
+
+    sent = publish(_RICH_DIGEST, _config(None), post=flood_only_rich, sleep=_NO_SLEEP)
+
+    # 1 попытка + 2 повтора rich, затем выпуск вышел старым путём.
+    assert calls == ["sendRichMessage"] * 3 + ["sendMessage"]
+    assert sent == 1
+
+
+def test_publish_falls_back_and_alerts_on_a_rich_validation_4xx():
+    calls = []
+
+    def reject_rich(url, payload):
+        calls.append((_method(url), payload.get("chat_id")))
+        if _method(url) == "sendRichMessage":
+            raise _status_error(400)
+
+    sent = publish(
+        _RICH_DIGEST, _config("-1005555"), post=reject_rich, sleep=_NO_SLEEP,
+    )
+
+    assert sent == 1
+    # Выпуск вышел старым путём в канал дайджеста…
+    assert ("sendMessage", _DIGEST_CHAT) in calls
+    # …и дежурный узнал, что rich-отправка отклонена.
+    alerts = [chat for method, chat in calls if method == "sendMessage" and chat == "-1005555"]
+    assert alerts
+
+
+def test_render_rich_fallback_alert_names_the_reason():
+    from publisher import render_rich_fallback_alert
+
+    text = render_rich_fallback_alert(
+        date(2026, 11, 7), RuntimeError("Bad Request: rich message must be non-empty")
+    )
+    assert "старом формате" in text
+    assert "07.11.2026" in text
+    assert "rich message must be non-empty" in text
+
+
+def test_publish_falls_back_when_the_rich_render_exceeds_limits():
+    # Локальная валидация — definite-отказ до любого запроса: fallback сразу.
+    huge = "Резюме.\n\n" + "\n\n".join(f"- пункт {i}" for i in range(600))
+    calls = []
+
+    sent = publish(
+        _digest(huge), _config(None),
+        post=lambda url, payload: calls.append(_method(url)), sleep=_NO_SLEEP,
+    )
+
+    # ни одной rich-попытки; выпуск вышел частями старого пути
+    assert calls and all(m == "sendMessage" for m in calls)
+    assert sent >= 1
+
+
+def test_publish_raises_unknown_on_timeout_and_never_retries_or_falls_back():
+    calls = []
+
+    def hang(url, payload):
+        calls.append(_method(url))
+        raise httpx.TimeoutException("read timed out")
+
+    with pytest.raises(UnknownDeliveryError):
+        publish(_RICH_DIGEST, _config(None), post=hang, sleep=_NO_SLEEP)
+
+    assert calls == ["sendRichMessage"]  # ни повтора, ни fallback — дубль хуже
+
+
+def test_publish_raises_unknown_on_a_5xx_response():
+    calls = []
+
+    def server_error(url, payload):
+        calls.append(_method(url))
+        raise _status_error(502)
+
+    with pytest.raises(UnknownDeliveryError):
+        publish(_RICH_DIGEST, _config(None), post=server_error, sleep=_NO_SLEEP)
+
+    assert calls == ["sendRichMessage"]
+
+
+def test_render_unknown_alert_tells_the_duty_human_to_check_the_channel():
+    from publisher import render_unknown_alert
+
+    text = render_unknown_alert(date(2026, 11, 7), RuntimeError("read timed out"))
+    assert "исход" in text and "неизвестен" in text
+    assert "Проверь канал" in text
+    assert "07.11.2026" in text
+
+
+def test_alert_delivery_failure_routes_unknown_outcome_to_its_own_alert():
+    from publisher import alert_delivery_failure
+
+    calls = []
+
+    def post(url, payload):
+        calls.append(payload)
+
+    alert_delivery_failure(
+        date(2026, 11, 7), UnknownDeliveryError("read timed out"),
+        _config("-1005555"), post=post, sleep=_NO_SLEEP,
+    )
+
+    assert len(calls) == 1
+    assert "неизвестен" in calls[0]["text"]
+
+
+def test_publish_review_uses_the_weekly_title():
+    calls = []
+    title = "📊 **Обзор недели по маркировке: 25.09–01.10.2026**"
+
+    sent = publish_review(
+        _digest("Тренды недели."),
+        title,
+        _config(None),
+        post=lambda url, payload: calls.append((url, payload)), sleep=_NO_SLEEP,
+    )
+
+    assert sent == 1
+    (url, payload), = calls
+    assert _method(url) == "sendRichMessage"
+    markdown = payload["rich_message"]["markdown"]
+    assert markdown.startswith("##### 📊 Обзор недели по маркировке: 25.09–01.10.2026")
+    assert "Тренды недели." in markdown
+    assert "</footer>" in markdown

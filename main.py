@@ -14,7 +14,7 @@ from config import Config, load_config
 from db import connect, fetch_channel_posts, fetch_digest_messages
 from digest_archive import published_digest
 from models import DigestResult, TelegramMessage
-from publisher import alert_degraded, alert_failure, publish
+from publisher import alert_degraded, alert_delivery_failure, publish
 from window import previous_msk_day
 
 logger = logging.getLogger(__name__)
@@ -123,7 +123,9 @@ def run() -> None:
 
     parts = run_and_alert_on_failure(
         lambda: _digest_once(day, config),
-        lambda error: alert_failure(day, error, config),
+        # An unknown rich delivery gets its own «check the channel» alert
+        # instead of the plain «not published» one (ADR-0004 ladder).
+        lambda error: alert_delivery_failure(day, error, config),
     )
 
     if parts is not None:

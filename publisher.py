@@ -17,7 +17,8 @@ import httpx
 
 from config import Config
 from models import DigestResult
-from render import TELEGRAM_LIMIT, render_parts
+from render import TELEGRAM_LIMIT, render_parts, render_titled_parts
+from rich import render_rich, render_rich_titled, validate_rich_limits
 
 logger = logging.getLogger(__name__)
 
@@ -41,6 +42,21 @@ class TelegramFloodError(Exception):
     def __init__(self, retry_after: float) -> None:
         self.retry_after = retry_after
         super().__init__(f"Telegram flood wait: {retry_after}s")
+
+
+class UnknownDeliveryError(RuntimeError):
+    """A rich send ended with no answer: the message may already be published.
+
+    Retrying or falling back can duplicate the issue in the channel — a
+    duplicate is worse than a late issue — so nothing is re-sent
+    automatically; a human checks the channel (ADR-0004 delivery ladder).
+    """
+
+
+class RichRejected(Exception):
+    """A definite rich failure — local limit validation, a Telegram 4xx, or a
+    flood wait that never cleared. Nothing was published via rich, so the
+    legacy HTML fallback is safe (no duplicate risk)."""
 
 
 def _parse_retry_after(resp: httpx.Response) -> float:
@@ -132,12 +148,113 @@ def send_parts(
     return sent
 
 
-def publish(digest: DigestResult, config: Config) -> int:
+def publish(
+    digest: DigestResult, config: Config,
+    *, post=_http_post, sleep: Callable[[float], None] = time.sleep,
+) -> int:
     """Publish the Digest to the Telegram digest channel. Returns parts sent."""
-    parts = render_parts(digest)
-    return send_parts(
-        parts, config.telegram_bot_token, config.telegram_digest_chat_id
+    return _publish_rich(
+        config, render_rich(digest),
+        lambda: render_parts(digest), date.fromisoformat(digest.date),
+        post=post, sleep=sleep,
     )
+
+
+def publish_review(
+    digest: DigestResult, title: str, config: Config, *, subject: str | None = None,
+    post=_http_post, sleep: Callable[[float], None] = time.sleep,
+) -> int:
+    """Publish the weekly review the same way: one Rich Message, titled by
+    ``title`` (deliberately unlike a Digest title — the archive never
+    mistakes a review for a Digest), with the same delivery ladder."""
+    return _publish_rich(
+        config, render_rich_titled(
+            title, digest.markdown,
+            footer="Обзор недели по маркировке",
+        ),
+        lambda: render_titled_parts(title, digest.markdown),
+        date.fromisoformat(digest.date), subject=subject, post=post, sleep=sleep,
+    )
+
+
+def _send_rich(
+    url, payload, post, sleep,
+    max_flood_retries: int = _MAX_FLOOD_RETRIES,
+) -> None:
+    """Send one rich message under the delivery ladder.
+
+    429 → wait ``retry_after`` and retry, bounded; a 4xx or an exhausted
+    flood is a definite rejection (RichRejected — nothing was published);
+    a 5xx or a transport failure leaves the outcome unknown
+    (UnknownDeliveryError — no retry, ever). Anything else propagates raw:
+    an unexpected error is a bug to surface, not a delivery state.
+    """
+    for attempt in range(max_flood_retries + 1):
+        try:
+            post(url, payload)
+            return
+        except TelegramFloodError as exc:
+            if attempt >= max_flood_retries:
+                raise RichRejected(f"flood limit never cleared: {exc}") from exc
+            logger.warning("Telegram flood: waiting %.1fs before retry", exc.retry_after)
+            sleep(exc.retry_after)
+        except httpx.HTTPStatusError as exc:
+            code = exc.response.status_code
+            if code >= 500:
+                raise UnknownDeliveryError(
+                    f"HTTP {code} from sendRichMessage — outcome unknown"
+                ) from exc
+            raise RichRejected(f"HTTP {code} from sendRichMessage: {exc}") from exc
+        except httpx.TransportError as exc:  # includes every timeout
+            raise UnknownDeliveryError(
+                f"transport failure during rich send — outcome unknown: {exc}"
+            ) from exc
+
+
+def _publish_rich(
+    config: Config,
+    markdown: str,
+    legacy_parts: Callable[[], list[str]],
+    day: date,
+    *,
+    subject: str | None = None,
+    post=_http_post,
+    sleep: Callable[[float], None] = time.sleep,
+) -> int:
+    """Deliver one issue as a single Rich Message (ADR-0004).
+
+    A definite rich rejection falls back to the legacy HTML multi-part path
+    and alerts the duty chat — the issue coming out beats the format, and the
+    alert keeps the fallback from silently becoming the permanent path. An
+    unknown outcome propagates: the caller's failure alert routes it to its
+    own «check the channel» text (alert_delivery_failure).
+    """
+    url = f"https://api.telegram.org/bot{config.telegram_bot_token}/sendRichMessage"
+    payload = {
+        "chat_id": config.telegram_digest_chat_id,
+        "rich_message": {"markdown": markdown},
+    }
+    try:
+        try:
+            validate_rich_limits(markdown)  # definite, local — before any request
+        except ValueError as exc:
+            raise RichRejected(f"local limit check failed: {exc}") from exc
+        _send_rich(url, payload, post, sleep)
+        return 1
+    except RichRejected as exc:
+        logger.warning(
+            "Rich send rejected (%s) — publishing via the legacy HTML path", exc
+        )
+        alert_rich_fallback(
+            day, exc, config, subject=subject, post=post, sleep=sleep
+        )
+        return send_parts(
+            legacy_parts(),
+            config.telegram_bot_token,
+            config.telegram_digest_chat_id,
+            post=post,
+            sleep=sleep,
+        )
 
 
 # Marks an alert whose error message was too long to carry whole.
@@ -244,6 +361,119 @@ def render_degraded_alert(
     # provider's own response body, which can be an HTML page from a proxy.
     escaped = html.escape(body, quote=False)
     return header + _clip_html(escaped, TELEGRAM_LIMIT - len(header))
+
+
+def render_rich_fallback_alert(
+    day: date, error: BaseException, *, subject: str | None = None
+) -> str:
+    """Render a fell-back-to-legacy run as one short Telegram message.
+
+    The issue did come out, but in the old format: worth one line to the
+    duty chat, because a rich path that silently rots leaves the channel on
+    the legacy look forever without anyone deciding to.
+    """
+    header = f"🟠 <b>{subject or _default_subject(day)} опубликован в старом формате</b>\n\n"
+    reason = html.escape(f"{error}", quote=False)
+    return header + _clip_html(reason, TELEGRAM_LIMIT - len(header))
+
+
+def alert_rich_fallback(
+    day: date,
+    error: BaseException,
+    config: Config,
+    *,
+    subject: str | None = None,
+    post=_http_post,
+    sleep: Callable[[float], None] = time.sleep,
+) -> None:
+    """Tell the alert chat the issue went out via the legacy fallback.
+
+    Never raises: the issue is already published, so an undeliverable
+    footnote must not turn a successful run into a failing one.
+    """
+    if not config.telegram_alert_chat_id:
+        logger.warning(
+            "Rich send for %s fell back to the legacy path and "
+            "TELEGRAM_ALERT_CHAT_ID is not set: %s", day, error,
+        )
+        return
+    try:
+        send_parts(
+            [render_rich_fallback_alert(day, error, subject=subject)],
+            config.telegram_bot_token,
+            config.telegram_alert_chat_id,
+            post=post, sleep=sleep,
+        )
+    except Exception as alert_error:
+        logger.error(
+            "Could not deliver the rich-fallback alert for %s: %s", day, alert_error
+        )
+
+
+def render_unknown_alert(
+    day: date, error: BaseException, *, subject: str | None = None
+) -> str:
+    """Render an unknown-outcome send as one short Telegram message.
+
+    Deliberately unlike the failure alert: that one means nothing was
+    published, this one means nobody knows — and the next move is a human
+    looking at the channel, not a resend.
+    """
+    header = f"❓ <b>{subject or _default_subject(day)}: исход отправки неизвестен</b>\n\n"
+    body = (
+        "sendRichMessage не завершился ответом (таймаут или 5xx) — выпуск мог "
+        "уже опубликоваться. Проверь канал руками: повторная отправка может "
+        "дать дубль.\n\n"
+    )
+    reason = html.escape(f"{error}", quote=False)
+    return header + body + _clip_html(reason, TELEGRAM_LIMIT - len(header) - len(body))
+
+
+def alert_unknown(
+    day: date,
+    error: BaseException,
+    config: Config,
+    *,
+    subject: str | None = None,
+    post=_http_post,
+    sleep: Callable[[float], None] = time.sleep,
+) -> None:
+    """Tell the alert chat a send ended with an unknown outcome. Never raises
+    (best-effort like the other alerts)."""
+    if not config.telegram_alert_chat_id:
+        logger.warning(
+            "Rich send for %s has unknown outcome and "
+            "TELEGRAM_ALERT_CHAT_ID is not set: %s", day, error,
+        )
+        return
+    try:
+        send_parts(
+            [render_unknown_alert(day, error, subject=subject)],
+            config.telegram_bot_token,
+            config.telegram_alert_chat_id,
+            post=post, sleep=sleep,
+        )
+    except Exception as alert_error:
+        logger.error(
+            "Could not deliver the unknown-outcome alert for %s: %s", day, alert_error
+        )
+
+
+def alert_delivery_failure(
+    day: date,
+    error: BaseException,
+    config: Config,
+    *,
+    subject: str | None = None,
+    post=_http_post,
+    sleep: Callable[[float], None] = time.sleep,
+) -> None:
+    """Route a pipeline failure to the right alert: an unknown delivery gets
+    its own «check the channel» text, everything else the failure alert."""
+    if isinstance(error, UnknownDeliveryError):
+        alert_unknown(day, error, config, subject=subject, post=post, sleep=sleep)
+    else:
+        alert_failure(day, error, config, subject=subject, post=post, sleep=sleep)
 
 
 def alert_degraded(
