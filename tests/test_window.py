@@ -37,6 +37,6 @@ def test_production_passes_utc_cron_time():
 
 
 def test_the_week_is_the_seven_days_ending_yesterday():
-    # Friday 2026-10-02 10:00 MSK — the weekly cron run.
-    now = datetime(2026, 10, 2, 10, 0, tzinfo=MSK)
-    assert previous_msk_week(now) == (date(2026, 9, 25), date(2026, 10, 1))
+    # Saturday 2026-10-03 11:00 MSK — the weekly cron run.
+    now = datetime(2026, 10, 3, 11, 0, tzinfo=MSK)
+    assert previous_msk_week(now) == (date(2026, 9, 26), date(2026, 10, 2))

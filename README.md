@@ -35,7 +35,7 @@ Domain vocabulary is in [`CONTEXT.md`](CONTEXT.md).
    4096-char limit. Each theme links to its discussion and folds under its
    heading.
 
-### Weekly review (`weekly.py`, Fridays)
+### Weekly review (`weekly.py`, Saturdays)
 
 Reads the Digests published over the seven days ending yesterday back from the
 Message Store and posts one review: trends, the week's top three themes, and
@@ -126,6 +126,6 @@ missed day is simply skipped (no self-healing, by design).
 
 A second cron service (`markirovka-weekly`) from the same repo and branch, with
 the same environment variables. Its **Settings**: **Cron Schedule**
-`0 7 * * 5` (Fridays 10:00 MSK — an hour after the daily run, so Thursday's
-Digest is already published), **Start Command** `python weekly.py`,
+`0 8 * * 6` (Saturdays 11:00 MSK — two hours after the daily run, so
+Friday's Digest is already published), **Start Command** `python weekly.py`,
 **Restart Policy** `NEVER`.

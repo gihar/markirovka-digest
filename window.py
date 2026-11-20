@@ -22,8 +22,8 @@ def previous_msk_day(now: datetime) -> date:
 def previous_msk_week(now: datetime) -> tuple[date, date]:
     """Return (first, last) MSK dates of the seven days ending yesterday.
 
-    The weekly review covers them: run on a Friday, it spans the previous
-    Friday through Thursday, whose Digest was published that same morning.
+    The weekly review covers them: run on a Saturday, it spans the previous
+    Saturday through Friday, whose Digest was published that same morning.
     """
     last = previous_msk_day(now)
     return last - timedelta(days=6), last
